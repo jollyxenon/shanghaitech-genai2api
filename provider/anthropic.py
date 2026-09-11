@@ -65,11 +65,18 @@ def anthropic_allowed_tool_names(body: Dict[str, Any]) -> set[str]:
     tools = body.get("tools")
     if not isinstance(tools, list):
         return set()
-    return {
+    names = {
         tool["name"]
         for tool in tools
         if isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"]
     }
+    # tool_choice 指定单个工具时，只允许该工具，避免模型顺手调用其它工具。
+    choice = body.get("tool_choice")
+    if isinstance(choice, dict) and choice.get("type") == "tool":
+        name = choice.get("name")
+        if name in names:
+            return {name}
+    return names
 
 
 def anthropic_tools_to_openai_tools(tools: Any) -> List[Dict[str, Any]]:

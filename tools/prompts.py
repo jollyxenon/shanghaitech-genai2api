@@ -26,7 +26,8 @@ Rules:
 
 TOOL_CHOICE_REQUIRED_PROMPT = "\nYou MUST call at least one tool in your response. Do NOT respond with plain text only."
 TOOL_CHOICE_SPECIFIC_PROMPT = (
-    '\nYou MUST call the tool named "{name}" in your response.'
+    '\nYou MUST call the tool named "{name}" in your response, '
+    "and you MUST NOT call any other tool."
 )
 
 COMMON_TOOL_EXAMPLES = {

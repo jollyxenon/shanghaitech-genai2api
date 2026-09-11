@@ -47,6 +47,11 @@ def chat_completions():
             for tool in (tools or [])
             if tool.get("type") == "function" and tool.get("function", {}).get("name")
         }
+        # tool_choice 指定单个函数时收窄允许集合，让输出层也只透传该工具。
+        if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+            restricted = (tool_choice.get("function") or {}).get("name")
+            if restricted in allowed_tool_names:
+                allowed_tool_names = {restricted}
 
         logger.info("[%s] model=%s stream=%s tools=%s messages=%d",
                      request_id, model, stream, bool(has_tools), len(messages))

@@ -46,6 +46,11 @@ def _build_request(body):
     allowed_tool_names = {
         tool["function"]["name"] for tool in chat_tools if tool.get("function", {}).get("name")
     }
+    # tool_choice 指定单个函数时收窄允许集合，避免模型顺手调用其它工具。
+    if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        restricted = (tool_choice.get("function") or {}).get("name")
+        if restricted in allowed_tool_names:
+            allowed_tool_names = {restricted}
     return (
         messages,
         model,
