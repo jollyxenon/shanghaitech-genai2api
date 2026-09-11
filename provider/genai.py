@@ -15,6 +15,9 @@ from tools.prompts import flatten_message_content, normalize_message_content
 logger = logging.getLogger(__name__)
 TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s]")
 
+# 上游几十万 token 的大 prompt 首 token 可能远超 60s，用长超时避免被误判为失败。
+UPSTREAM_TIMEOUT = 300
+
 
 def convert_messages_to_genai_format(messages):
     """取最后一条 user 消息的文本作为当前提问（chatInfo）。"""
@@ -118,7 +121,7 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
             headers=headers,
             json=genai_data,
             stream=True,
-            timeout=60,
+            timeout=UPSTREAM_TIMEOUT,
         )
 
         if response.status_code == 401:
@@ -127,7 +130,8 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
                 logger.info("Token refreshed after 401, retrying request")
                 headers = build_genai_headers(new_token)
                 response = requests.post(
-                    GENAI_URL, headers=headers, json=genai_data, stream=True, timeout=60
+                    GENAI_URL, headers=headers, json=genai_data, stream=True,
+                    timeout=UPSTREAM_TIMEOUT,
                 )
 
         if response.status_code != 200:
