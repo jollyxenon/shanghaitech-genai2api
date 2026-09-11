@@ -27,6 +27,8 @@
 
 ### Bug Fixes
 
+- 修复上游在 SSE 通道里直接返回纯文本错误（如 worker 不可用时的 `No available workers (all circuits open or unhealthy)`）被当作 `JSONDecodeError` 跳过，导致三种接口都把“上游不可用”伪装成 HTTP 200 空回复；现在会转为标准 error 事件 / 502
+- 解析器显式识别 `[DONE]` 结束标记与 SSE 注释/字段行，不再依赖 JSON 解析失败来跳过它们
 - 修复 Chat 非流式路径解析流式错误块失败就 `pass`，导致上游错误被静默丢弃成 HTTP 200 空回复
 - 移除 Anthropic 流式文本里对 DSML 标签的预先删除：它会在解析器看到工具调用之前把标签删掉，导致工具调用丢失、属性碎片（`name="...">`）泄漏为正文
 - 解析失败时输出的是清理过 DSML 标签的文本，而不是原始标签内容

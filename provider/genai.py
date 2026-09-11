@@ -151,16 +151,33 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
             if not line:
                 continue
 
-            try:
-                line_str = line.decode("utf-8") if isinstance(line, bytes) else line
-                if line_str.startswith("data:"):
-                    line_str = line_str[5:].strip()
+            line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+            line_str = line_str.strip()
+            if not line_str:
+                continue
+
+            # SSE 结束标记，正常收尾；其后的用量信息不再需要。
+            if line_str in ("[DONE]", "data:[DONE]", "data: [DONE]"):
+                break
+
+            # SSE 注释行（": keep-alive"）与其它字段行不是数据，跳过。
+            if line_str.startswith(":") or line_str.split(":", 1)[0] in ("event", "id", "retry"):
+                continue
+
+            if line_str.startswith("data:"):
+                line_str = line_str[5:].strip()
                 if not line_str:
                     continue
+
+            try:
                 genai_json = json.loads(line_str)
-            except json.JSONDecodeError as e:
-                logger.debug("JSON decode error: %s", e)
-                continue
+            except json.JSONDecodeError:
+                # 上游有时直接在 SSE 通道里写纯文本错误（worker 不可用时就是一行
+                # "No available workers (all circuits open or unhealthy)"）。以前这里
+                # 只记 debug 日志然后跳过，结果把“上游不可用”伪装成 HTTP 200 空回复。
+                logger.warning("GenAI 上游返回非 JSON 文本: %s", line_str[:200])
+                yield {"type": "error", "message": f"Upstream error: {line_str[:200]}"}
+                return
 
             if isinstance(genai_json, dict) and genai_json.get("success") is False:
                 err_msg = genai_json.get("message", "Unknown upstream error")

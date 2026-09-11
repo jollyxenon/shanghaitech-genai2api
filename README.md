@@ -129,7 +129,7 @@ wire_api = "responses"
 - **输出长度由代理本地强制**：上游不执行 `maxToken`，代理按估算 token 在本地截断，命中上限时 Chat 的 `finish_reason` 与 Anthropic 的 `stop_reason` 会分别返回 `length` / `max_tokens`；未命中时正常返回 `stop` / `end_turn`。预算包含思维链 token，因此对推理模型给很小的 `max_tokens` 时可能只产出思维链、正文为空。
 - **usage 是本地估算**：`prompt_tokens` / `input_tokens` / `completion_tokens` 均由代理按文本估算，不是上游真实计费值。
 - **reasoning effort 类参数不被支持**：上游 GenAI 只接受 `chatInfo/messages/type/stream/aiType/aiSecType/promptTokens/rootAiType/maxToken`，没有思考深度开关。Chat 的 `reasoning_effort`、Anthropic 的 `thinking.budget_tokens`、Responses 的 `reasoning.effort` 都会被接受但忽略，代理只在日志里记一条 warning，不会伪造区分度。
-- **上游超时与错误传播**：上游单次请求超时为 300 秒；大 prompt（数十万 token）首 token 仍可能超时，此时流式接口返回标准 `error` 事件（HTTP 仍为 200），非流式接口返回 HTTP 502 与 `{"error": {...}}`。
+- **上游超时与错误传播**：上游单次请求超时为 300 秒；大 prompt（数十万 token）首 token 仍可能超时，此时流式接口返回标准 `error` 事件（HTTP 仍为 200），非流式接口返回 HTTP 502 与 `{"error": {...}}`。上游即使用 HTTP 200 + SSE 返回纯文本错误（如 worker 不可用时的 `No available workers (all circuits open or unhealthy)`），也会按同样方式上报，不再表现为空回复。
 - **兼容 GenAI 原生 DSML 标记**：部分模型会自行输出 `<｜DSML｜tool_call>`、`<｜DSML｜call>`、`<｜DSML｜_call>`、`<｜DSML｜ name="Tool">` 等 DSML 变体，代理会统一归一化为 `<tool_call>` 再解析；标签内的参数同时兼容 JSON 与 Python 字面量（单引号、`True`/`None`）。模型输出严重残缺时仍可能解析失败。
 
 ## 上下文探测工具
