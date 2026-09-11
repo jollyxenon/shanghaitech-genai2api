@@ -5,6 +5,7 @@ import uuid
 
 from flask import Blueprint, current_app, request, jsonify, stream_with_context, Response
 
+from provider.genai import estimate_messages_tokens
 from provider.anthropic import (
     COMPAT_THINKING_SIGNATURE,
     anthropic_allowed_tool_names,
@@ -176,7 +177,7 @@ def messages():
                 "stop_reason": stop_reason,
                 "stop_sequence": None,
                 "usage": {
-                    "input_tokens": 0,
+                    "input_tokens": estimate_messages_tokens(genai_messages),
                     "output_tokens": output_tokens,
                 },
             }

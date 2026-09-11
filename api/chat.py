@@ -11,6 +11,7 @@ from tools.parsing import extract_tool_calls
 from provider.genai import (
     collect_genai_response,
     convert_messages_to_genai_format,
+    estimate_messages_tokens,
     estimate_text_tokens,
     stream_genai_response,
     stream_genai_response_with_tools,
@@ -108,11 +109,12 @@ def chat_completions():
                     "role": "assistant",
                     "content": complete_content
                 }
-                finish_reason = "stop"
+                finish_reason = "length" if finish_reason == "length" else "stop"
 
             if complete_reasoning:
                 message_obj["reasoning_content"] = complete_reasoning
 
+            prompt_tokens = estimate_messages_tokens(messages)
             completion_tokens = estimate_text_tokens(complete_content + complete_reasoning)
             response = {
                 "id": completion_id,
@@ -125,9 +127,9 @@ def chat_completions():
                     "finish_reason": finish_reason
                 }],
                 "usage": {
-                    "prompt_tokens": 0,
+                    "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
-                    "total_tokens": completion_tokens
+                    "total_tokens": prompt_tokens + completion_tokens
                 }
             }
             return jsonify(response)

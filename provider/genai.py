@@ -44,6 +44,14 @@ def estimate_text_tokens(text):
     return len(TOKEN_PATTERN.findall(text))
 
 
+def estimate_messages_tokens(messages):
+    """估算整段对话的输入 token，用于填充 usage.prompt_tokens / input_tokens。"""
+    return sum(
+        estimate_text_tokens(flatten_message_content(msg.get("content", "")))
+        for msg in messages
+    )
+
+
 def log_stream_metrics(model, started_at, first_token_at, content_text, reasoning_text):
     total_elapsed = max(time.monotonic() - started_at, 1e-6)
     content_tokens = estimate_text_tokens(content_text)
@@ -133,6 +141,8 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
             return
 
         finish_reason = None
+        emitted_tokens = 0
+        truncated = False
         for line in response.iter_lines():
             if not line:
                 continue
@@ -172,12 +182,17 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
             content, reasoning = extract_content_from_genai(genai_json)
             if content or reasoning:
                 yield {"type": "delta", "content": content, "reasoning": reasoning}
+                emitted_tokens += estimate_text_tokens(content or "") + estimate_text_tokens(reasoning or "")
+                # 上游不执行 maxToken，长度上限只能在本地按估算 token 强制生效。
+                if max_tokens and emitted_tokens >= max_tokens:
+                    truncated = True
+                    break
 
             if choices[0].get("finish_reason") is not None:
                 finish_reason = choices[0].get("finish_reason")
                 break
 
-        yield {"type": "done", "finish_reason": finish_reason}
+        yield {"type": "done", "finish_reason": "length" if truncated else finish_reason}
 
     except Exception as e:
         logger.exception("Error in iter_genai_stream")
@@ -206,6 +221,11 @@ def collect_genai_response(chat_info, messages, model, max_tokens, config):
     return "".join(content_parts), "".join(reasoning_parts), finish_reason
 
 
+def _chat_finish_reason(upstream_reason):
+    """把上游 finish_reason 映射成 OpenAI Chat 的取值。"""
+    return "length" if upstream_reason == "length" else "stop"
+
+
 def stream_genai_response(chat_info, messages, model, max_tokens, config):
     """OpenAI Chat Completions 兼容的流式响应。"""
     started_at = time.monotonic()
@@ -215,6 +235,7 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(datetime.now().timestamp())
     sent_role = False
+    prompt_tokens = estimate_messages_tokens(messages)
 
     def make_chunk(delta, finish_reason=None, usage=None):
         chunk = {
@@ -261,10 +282,10 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
             model, started_at, first_token_at, "".join(content_parts), "".join(reasoning_parts)
         )
         output_tokens = estimate_text_tokens("".join(content_parts) + "".join(reasoning_parts))
-        yield make_chunk({}, finish_reason="stop", usage={
-            "prompt_tokens": 0,
+        yield make_chunk({}, finish_reason=_chat_finish_reason(event.get("finish_reason")), usage={
+            "prompt_tokens": prompt_tokens,
             "completion_tokens": output_tokens,
-            "total_tokens": output_tokens,
+            "total_tokens": prompt_tokens + output_tokens,
         })
         yield "data: [DONE]\n\n"
         return
@@ -289,6 +310,7 @@ def stream_genai_response_with_tools(
     tool_buffer = ""
     sent_role = False
     tool_detected = False
+    prompt_tokens = estimate_messages_tokens(messages)
 
     def make_chunk(delta, finish_reason=None, usage=None):
         chunk = {
@@ -399,7 +421,7 @@ def stream_genai_response_with_tools(
 
             logger.warning("Tool tag detected but parsing failed — emitting as text")
             yield emit({"content": remaining if remaining is not None else tool_buffer})
-            yield make_chunk({}, finish_reason="stop")
+            yield make_chunk({}, finish_reason=_chat_finish_reason(event.get("finish_reason")))
             yield "data: [DONE]\n\n"
             return
 
@@ -413,10 +435,10 @@ def stream_genai_response_with_tools(
             "".join(content_parts), "".join(reasoning_parts),
         )
         output_tokens = estimate_text_tokens("".join(content_parts) + "".join(reasoning_parts))
-        yield make_chunk({}, finish_reason="stop", usage={
-            "prompt_tokens": 0,
+        yield make_chunk({}, finish_reason=_chat_finish_reason(event.get("finish_reason")), usage={
+            "prompt_tokens": prompt_tokens,
             "completion_tokens": output_tokens,
-            "total_tokens": output_tokens,
+            "total_tokens": prompt_tokens + output_tokens,
         })
         yield "data: [DONE]\n\n"
         return

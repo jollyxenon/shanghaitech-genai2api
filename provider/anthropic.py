@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from config import model_registry
-from provider.genai import iter_genai_stream
+from provider.genai import estimate_messages_tokens, estimate_text_tokens, iter_genai_stream
 from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
 from tools.prompts import inject_tool_prompt
 
@@ -437,6 +437,7 @@ def stream_genai_as_anthropic(
     content_parts: List[str] = []
     reasoning_parts: List[str] = []
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
+    input_tokens = estimate_messages_tokens(messages)
 
     # 取出最后一条 user 消息作为当前提问（chatInfo），其余作为历史
     chat_info = ""
@@ -460,7 +461,7 @@ def stream_genai_as_anthropic(
             "content": [],
             "stop_reason": None,
             "stop_sequence": None,
-            "usage": {"input_tokens": 0, "output_tokens": 0},
+            "usage": {"input_tokens": input_tokens, "output_tokens": 0},
         },
     })
 
@@ -589,7 +590,7 @@ def stream_genai_as_anthropic(
             continue
 
         # done：先冲刷残留文本，再输出工具调用
-        stop_reason = "end_turn"
+        stop_reason = "max_tokens" if event.get("finish_reason") == "length" else "end_turn"
         if tool_detected:
             tool_buffer += buffer
             buffer = ""
@@ -641,9 +642,9 @@ def stream_genai_as_anthropic(
         yield from close_thinking_block()
         yield from close_text_block()
 
-        # Calculate output tokens
+        # Calculate output tokens（含思维链）
         output_text = "".join(content_parts)
-        output_tokens = max(1, len(output_text) // 4) if output_text else 0
+        output_tokens = estimate_text_tokens(output_text + "".join(reasoning_parts))
 
         yield write_sse("message_delta", {
             "type": "message_delta",
