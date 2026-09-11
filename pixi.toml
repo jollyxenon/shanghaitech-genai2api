@@ -11,6 +11,7 @@ readme = "README.md"
 serve = "python main.py"
 test = "pytest"
 context-probe = "python tools/context_probe.py"
+bench-speed = "python tools/bench_speed.py"
 
 [dependencies]
 python = "3.11.*"

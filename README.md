@@ -162,6 +162,41 @@ pixi run context-probe --all
 
 > 注意：`--find` 和较大的 `--tokens` 会向平台发送很大的请求体并消耗真实 token 额度；az 系列模型可能触发平台配额限制（报 `额度上限了`）。
 
+## 速度基准工具
+
+`bench-speed` 工具通过本地代理（默认 `http://127.0.0.1:31100`）逐一向每个对话模型发流式请求，测量两个指标：
+
+- **首字时间（TTFT）**：从发出请求到收到第一个内容或思维链增量。
+- **正文首字时间**：从发出请求到收到第一个正文（非思维链）增量。
+- **输出速度**：输出 token 数 ÷（总耗时 − 首字时间），即首字后的解码速度。
+
+模型顺序执行以避免并发干扰，每个模型先预热再取多次中位数；输出 token 优先取流末尾 `usage.completion_tokens`。
+
+```bash
+# 扫描 /v1/models 里的全部对话模型
+pixi run bench-speed
+
+# 只测指定模型，次数与输出上限可调
+pixi run bench-speed --models deepseek-chat,deepseek-pro --runs 5 --max-tokens 2048
+
+# 把 Markdown 报告写入文件
+pixi run bench-speed --output BENCH_speed.md
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--base-url` | 代理地址 | `http://127.0.0.1:31100` |
+| `--api-key` | 代理 API key（或设置 `API_KEY` 环境变量） | — |
+| `--models` | 逗号分隔的模型 id，默认取 `/v1/models` 全部对话模型 | — |
+| `--runs` | 每个模型正式测量次数 | `3` |
+| `--warmup` | 每个模型预热次数（不计入结果） | `1` |
+| `--max-tokens` | 单次请求输出上限 | `512` |
+| `--timeout` | 单次请求超时（秒） | `300` |
+| `--prompt` | 测试用的用户消息 | 计数到 200 |
+| `--output` | 把 Markdown 报告写入该文件 | — |
+
+> 注意：被平台标记为不可用的模型（额度上限、`No available workers`）会在报告里记为失败，这不代表速度，而是上游状态。
+
 ## 致谢
 
 本项目基于 [HeZeBang/GenAI2OpenAI](https://github.com/HeZeBang/GenAI2OpenAI) 开发，感谢原作者的工作。

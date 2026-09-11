@@ -4,6 +4,7 @@
 
 ### New Features
 
+- 新增 `tools/bench_speed.py`：经本地代理逐个测量模型的流式首字时间（TTFT）、正文首字时间与输出速度（tokens/s），提供 `pixi run bench-speed` 任务
 - **DSML 工具标记兼容**：部分模型会绕过注入的 `<tool_call>`，直接输出 GenAI 原生的 DSML 标记。代理现在统一处理这些变体：
   - 归一化 `<｜DSML｜tool_call>` / `<｜DSML｜call>` / `<｜DSML｜_call>` / `<｜DSML｜l_call>`（含半角 `|`）为 `<tool_call>`
   - 支持工具名写在属性里的变体 `<｜DSML｜ name="Read">`
