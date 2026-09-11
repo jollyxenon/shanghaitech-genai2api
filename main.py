@@ -59,9 +59,9 @@ if __name__ == '__main__':
     if config.api_format == "anthropic":
         api_format_name = "Anthropic (/v1/messages)"
     elif config.api_format == "openai":
-        api_format_name = "OpenAI (/v1/chat/completions)"
+        api_format_name = "OpenAI (/v1/chat/completions + /v1/responses)"
     else:
-        api_format_name = "OpenAI + Anthropic"
+        api_format_name = "OpenAI (/v1/chat/completions + /v1/responses) + Anthropic (/v1/messages)"
     logger.info("Starting GenAI proxy on port %d", config.port)
     logger.info("API Format: %s, Auth: %s, Token mode: %s",
                 api_format_name, "enabled" if config.api_key else "disabled",

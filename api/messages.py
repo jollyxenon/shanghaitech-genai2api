@@ -6,6 +6,7 @@ import uuid
 from flask import Blueprint, current_app, request, jsonify, stream_with_context, Response
 
 from provider.anthropic import (
+    COMPAT_THINKING_SIGNATURE,
     anthropic_allowed_tool_names,
     anthropic_messages_to_genai_format,
     parse_tool_arguments,
@@ -81,8 +82,9 @@ def messages():
             )
 
         else:
-            # Non-streaming response - collect streaming response and return as single message
+            # 非流式响应：收集流式事件后合并成单条 message
             output_text_parts = []
+            thinking_parts = []
             tool_blocks = {}
             stop_reason = "end_turn"
             for chunk in stream_genai_as_anthropic(
@@ -106,6 +108,12 @@ def messages():
 
                 if not data:
                     continue
+                if event == "error":
+                    return anthropic_error(
+                        data.get("error", {}).get("message", "Upstream error"),
+                        error_type="api_error",
+                        status=502,
+                    )
                 if event == "content_block_start" and data.get("content_block", {}).get("type") == "tool_use":
                     block = data["content_block"]
                     tool_blocks[data["index"]] = {
@@ -118,6 +126,8 @@ def messages():
                     delta = data.get("delta", {})
                     if delta.get("type") == "text_delta" and delta.get("text"):
                         output_text_parts.append(delta["text"])
+                    elif delta.get("type") == "thinking_delta" and delta.get("thinking"):
+                        thinking_parts.append(delta["thinking"])
                     elif delta.get("type") == "input_json_delta":
                         tool = tool_blocks.setdefault(data.get("index", 0), {
                             "type": "tool_use",
@@ -131,8 +141,19 @@ def messages():
 
             message_id = f"msg_{uuid.uuid4().hex[:24]}"
             output_text = "".join(output_text_parts)
-            output_tokens = max(1, len(output_text) // 4) if output_text else 0
+            thinking_text = "".join(thinking_parts)
+            output_tokens = (
+                max(1, (len(output_text) + len(thinking_text)) // 4)
+                if (output_text or thinking_text)
+                else 0
+            )
             content = []
+            if thinking_text:
+                content.append({
+                    "type": "thinking",
+                    "thinking": thinking_text,
+                    "signature": COMPAT_THINKING_SIGNATURE,
+                })
             if output_text:
                 content.append({"type": "text", "text": output_text})
             for index in sorted(tool_blocks):

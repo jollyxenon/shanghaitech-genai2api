@@ -1,8 +1,8 @@
 # GenAI2OpenAI
 
-将上海科技大学 GenAI 平台接入 Claude Code 的代理服务。
+将上海科技大学 GenAI 平台接入 Claude Code、Codex CLI 等客户端的代理服务，同时提供 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 三种接口。
 
-A proxy that connects ShanghaiTech's GenAI platform to Claude Code.
+A proxy that connects ShanghaiTech's GenAI platform to Claude Code, Codex CLI and other clients, exposing the Anthropic Messages, OpenAI Chat Completions and OpenAI Responses APIs.
 
 ## 快速开始
 
@@ -56,7 +56,7 @@ export ANTHROPIC_DEFAULT_OPUS_MODEL="chatglm"
 export ANTHROPIC_REASONING_MODEL="MiniMax-M1"
 ```
 
-### 4. 配置项目设置（减少权限弹窗）
+### 5. 配置项目设置（减少权限弹窗）
 
 在项目根目录创建 `.claude/settings.json`：
 
@@ -72,11 +72,30 @@ export ANTHROPIC_REASONING_MODEL="MiniMax-M1"
 }
 ```
 
-### 5. 启动
+### 6. 启动
 
 ```bash
 claude
 ```
+
+### 7. 配置 Codex CLI
+
+Codex CLI 默认走 OpenAI Responses API（`wire_api = "responses"`），编辑 `~/.codex/config.toml`：
+
+```toml
+model = "chatglm"                 # 必须填 GenAI 平台真实的模型 id（aiType），代理不做映射
+model_provider = "genai"
+disable_response_storage = true   # 代理不提供服务端会话存储
+
+[model_providers.genai]
+name = "ShanghaiTech GenAI"
+base_url = "http://127.0.0.1:31100/v1"   # 注意要带 /v1，Codex 会请求 {base_url}/responses
+wire_api = "responses"
+```
+
+可选：`model_reasoning_effort`、`model_reasoning_summary` 等字段由 Codex 发送，代理会忽略，但上游返回的思维链仍会以 `response.reasoning_summary_text.delta` 事件透传回去。
+
+如果你想改用 Chat Completions 接口，把 `wire_api` 改成 `"chat"` 即可。
 
 ## 参数说明
 
@@ -90,11 +109,22 @@ claude
 
 ## 特性
 
-- **Claude Code 兼容** — 提供 Anthropic Messages API，支持 `tool_use/tool_result` 转换，可直接接入 Claude Code
+- **Claude Code 兼容** — 提供 Anthropic Messages API，支持 `tool_use/tool_result` 转换与扩展思考（thinking）块，可直接接入 Claude Code
+- **Codex CLI 兼容** — 提供 OpenAI Responses API，支持 `function_call`、`custom_tool_call`（如 apply_patch）与 reasoning summary 事件
 - **OpenAI 兼容** — 同时提供 OpenAI Chat Completion API，支持 Cursor、Continue 等客户端
-- **Tool Calling** — 通过 prompt 注入实现 function calling，兼容不原生支持的模型
+- **Tool Calling** — 通过 prompt 注入实现 function calling，兼容不原生支持 function calling 的模型
+- **思维链透传** — 上游 `reasoning_content` 在三个接口里分别以 `reasoning_content`、thinking 块、reasoning 事件输出
 - **自动登录与刷新** — 学号密码模式通过 CAS 自动登录，JWT 过期静默刷新
 - **动态模型列表** — 自动从 GenAI 平台拉取可用模型
+
+## 已知限制
+
+- **模型名完全透传**：请求里的 `model` 会直接作为 GenAI 平台的 `aiType` 发送，不做任何映射。请填写平台真实存在的模型 id。
+- **无服务端会话状态**：Responses API 不支持 `previous_response_id`，也不做 response storage。客户端需要每轮发送完整历史（Codex 的 `disable_response_storage = true` 正好符合）。
+- **Responses API 是兼容子集**：实现了 Codex / OpenAI Agents SDK 实际使用的 message、function_call、custom_tool_call、reasoning 与文本 delta 事件；web_search、mcp、image_generation 等托管工具事件未实现。`response.completed` 会回显请求的 `tools` / `tool_choice` / `store` 等字段，但超出上下文上限时发出的是 `response.incomplete`。
+- **Anthropic thinking 签名是占位值**：上游 GenAI 没有 Anthropic 意义上的签名，代理返回 `genai-compat-no-signature`。历史里的 thinking 块会被忽略，不会转发给上游。
+- **只有独立 reasoning 字段会被当成思维链透传**：若模型把思考写进正文的 `<think>...</think>` 标签（而不是单独的 `reasoning` / `reasoning_content` 字段），这部分会被过滤掉，以免思考内容混进回答。
+- **上游是文本模型**：function calling 依赖 prompt 注入 + 文本解析（`<tool_call>` 标记），模型不按格式输出时可能解析失败，此时工具标记会作为普通文本返回。
 
 ## 上下文探测工具
 

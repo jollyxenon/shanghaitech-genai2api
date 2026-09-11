@@ -4,18 +4,18 @@ import ast
 import re
 import time
 import uuid
-from datetime import datetime
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
-import requests
-
-from config import GENAI_URL, build_genai_headers, model_registry
+from config import model_registry
+from provider.genai import iter_genai_stream
 from tools.parsing import extract_tool_calls, _tag_prefix_len
 from tools.prompts import inject_tool_prompt
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_VERSION = "2023-06-01"
+# 上游 GenAI 没有 Anthropic 的 thinking 签名，这里使用明确的兼容占位值，
+# 并且在把历史 thinking 块转回 GenAI 时会直接丢弃，不会伪造真实签名。
+COMPAT_THINKING_SIGNATURE = "genai-compat-no-signature"
 BARE_TOOL_CALL_RE = re.compile(r'\{\s*"name"\s*:\s*"')
 
 DSML_OPEN_RE = r"<\s*[|｜]DSML[|｜](?:tool_calls|invoke|parameter)\b"
@@ -49,6 +49,9 @@ def anthropic_content_to_text(content: Any) -> str:
             )
         elif part_type == "tool_result":
             text_parts.append(f"[tool_result id={part.get('tool_use_id', '')}] {tool_result_content_to_text(part.get('content', ''))}")
+        elif part_type in ("thinking", "redacted_thinking"):
+            # thinking 块是本地展示用的，不重新喂给上游模型
+            continue
         elif part_type == "image":
             text_parts.append("[image]")
         else:
@@ -151,6 +154,9 @@ def split_anthropic_content(content: Any) -> Tuple[str, List[Dict[str, Any]], Li
             tool_uses.append(part)
         elif part_type == "tool_result":
             tool_results.append(part)
+        elif part_type in ("thinking", "redacted_thinking"):
+            # 历史里的 thinking 块不参与 GenAI 转换
+            continue
         elif part_type == "image":
             text_parts.append("[image]")
         else:
@@ -221,19 +227,6 @@ def anthropic_messages_to_genai_format(body: Dict[str, Any], token: str) -> Tupl
         messages = inject_tool_prompt(messages, openai_tools, tool_choice)
 
     return system_prompt, messages, model
-
-
-def extract_content_from_genai(response_data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """Extract content and reasoning from GenAI response."""
-    try:
-        if "choices" in response_data and len(response_data["choices"]) > 0:
-            delta = response_data["choices"][0].get("delta", {})
-            content = delta.get("content") or None
-            reasoning = delta.get("reasoning_content") or delta.get("reasoning") or None
-            return content, reasoning
-    except (KeyError, IndexError, TypeError):
-        pass
-    return None, None
 
 
 def filter_thinking_and_dsml(text: str) -> str:
@@ -397,10 +390,6 @@ def parse_tool_arguments(arguments: Any) -> Dict[str, Any]:
     return {"arguments": parsed}
 
 
-def tool_arguments_json(arguments: Any) -> str:
-    return json_dumps_compact(parse_tool_arguments(arguments))
-
-
 def normalize_tool_input(tool_name: str, arguments: Any) -> Dict[str, Any]:
     parsed = parse_tool_arguments(arguments)
     aliases = {
@@ -451,38 +440,21 @@ def stream_genai_as_anthropic(
     started_at = time.monotonic()
     first_token_at = None
     content_parts: List[str] = []
+    reasoning_parts: List[str] = []
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
-    created = int(datetime.now().timestamp())
 
-    headers = build_genai_headers(token)
-    root_ai_type = model_registry.get_root_ai_type(model, token)
-    history_messages = list(messages)
+    # 取出最后一条 user 消息作为当前提问（chatInfo），其余作为历史
     chat_info = ""
+    history_messages = list(messages)
     for index in range(len(history_messages) - 1, -1, -1):
         if history_messages[index].get("role") == "user":
             chat_info = anthropic_content_to_text(history_messages[index].get("content", ""))
             del history_messages[index]
             break
 
-    genai_data = {
-        "chatInfo": chat_info,
-        "messages": history_messages,
-        "type": "3",
-        "stream": True,
-        "aiType": model,
-        "aiSecType": "1",
-        "promptTokens": 0,
-        "rootAiType": root_ai_type,
-        "maxToken": max_tokens
-    }
-
-    logger.debug("=== GenAI Request (Anthropic mode) ===")
-    logger.debug("Model: %s, rootAiType: %s", model, root_ai_type)
-
     def write_sse(event: str, data: Dict[str, Any]) -> str:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
-    # Send message_start event
     yield write_sse("message_start", {
         "type": "message_start",
         "message": {
@@ -497,154 +469,131 @@ def stream_genai_as_anthropic(
         },
     })
 
-    text_block_started = False
-    text_block_stopped = False
-    delta_count = 0
+    next_index = 0
+    thinking_index = None
+    text_index = None
+    text_block_open = False
+    text_block_done = False
+    tool_detected = False
     buffer = ""
     tool_buffer = ""
-    tool_detected = False
     thinking_state: Dict[str, Any] = {"in_thinking": False}
 
-    def emit_text(text: str) -> Generator[str, None, None]:
-        nonlocal first_token_at, text_block_started, delta_count
+    def open_thinking_block():
+        nonlocal thinking_index, next_index
+        thinking_index = next_index
+        next_index += 1
+        return write_sse("content_block_start", {
+            "type": "content_block_start",
+            "index": thinking_index,
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+        })
+
+    def close_thinking_block():
+        nonlocal thinking_index
+        if thinking_index is None:
+            return
+        index = thinking_index
+        thinking_index = None
+        yield write_sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "signature_delta", "signature": COMPAT_THINKING_SIGNATURE},
+        })
+        yield write_sse("content_block_stop", {"type": "content_block_stop", "index": index})
+
+    def emit_text(text: str):
+        nonlocal first_token_at, text_index, next_index, text_block_open
         if not text:
             return
         if first_token_at is None:
             first_token_at = time.monotonic()
-        if not text_block_started:
+        if not text_block_open:
+            text_index = next_index
+            next_index += 1
+            text_block_open = True
             yield write_sse("content_block_start", {
                 "type": "content_block_start",
-                "index": 0,
+                "index": text_index,
                 "content_block": {"type": "text", "text": ""},
             })
-            text_block_started = True
         content_parts.append(text)
-        delta_count += 1
         yield write_sse("content_block_delta", {
             "type": "content_block_delta",
-            "index": 0,
+            "index": text_index,
             "delta": {"type": "text_delta", "text": text},
         })
 
-    def close_text_block() -> Generator[str, None, None]:
-        nonlocal text_block_stopped
-        if text_block_started and not text_block_stopped:
-            yield write_sse("content_block_stop", {"type": "content_block_stop", "index": 0})
-            text_block_stopped = True
+    def close_text_block():
+        nonlocal text_block_open, text_block_done
+        if text_block_open and not text_block_done:
+            text_block_done = True
+            yield write_sse("content_block_stop", {"type": "content_block_stop", "index": text_index})
 
-    try:
-        response = requests.post(
-            GENAI_URL,
-            headers=headers,
-            json=genai_data,
-            stream=True,
-            timeout=60
-        )
-
-        if response.status_code == 401:
-            new_token = config.token_manager.force_refresh()
-            if new_token:
-                logger.info("Token refreshed after 401, retrying request")
-                headers = build_genai_headers(new_token)
-                response = requests.post(
-                    GENAI_URL, headers=headers, json=genai_data,
-                    stream=True, timeout=60
-                )
-
-        if response.status_code != 200:
-            logger.warning("GenAI API error %d: %s", response.status_code, response.text[:500])
+    for event in iter_genai_stream(chat_info, history_messages, model, max_tokens, config, token=token):
+        if event["type"] == "error":
             yield write_sse("error", {
                 "type": "error",
-                "error": {"type": "api_error", "message": f"Upstream API error: {response.status_code}"},
+                "error": {"type": "api_error", "message": event["message"]},
             })
             return
 
-        finished = False
-        for line in response.iter_lines():
-            if finished:
-                break
+        if event["type"] == "delta":
+            reasoning = event.get("reasoning")
+            # thinking block 必须排在所有正文之前，正文开始后无法再插入
+            if reasoning and not (text_block_open or text_block_done or tool_detected):
+                if thinking_index is None:
+                    yield open_thinking_block()
+                reasoning_parts.append(reasoning)
+                yield write_sse("content_block_delta", {
+                    "type": "content_block_delta",
+                    "index": thinking_index,
+                    "delta": {"type": "thinking_delta", "thinking": reasoning},
+                })
 
-            if line:
-                try:
-                    line_str = line.decode('utf-8') if isinstance(line, bytes) else line
+            content = event.get("content")
+            if content:
+                content = filter_thinking_text_delta(content, thinking_state)
+            if not content:
+                continue
 
-                    if line_str.startswith('data:'):
-                        line_str = line_str[5:].strip()
+            if thinking_index is not None:
+                yield from close_thinking_block()
 
-                    if line_str:
-                        genai_json = json.loads(line_str)
+            if tool_detected:
+                tool_buffer += content
+                continue
 
-                        if isinstance(genai_json, dict) and genai_json.get("success") is False:
-                            err_msg = genai_json.get("message", "Unknown upstream error")
-                            logger.warning("GenAI business error: %s", err_msg)
-                            yield write_sse("error", {
-                                "type": "error",
-                                "error": {"type": "api_error", "message": f"Upstream error: {err_msg}"},
-                            })
-                            return
+            buffer += content
+            tag_pos = buffer.find("<tool_call")
+            if tag_pos >= 0:
+                yield from emit_text(buffer[:tag_pos])
+                tool_detected = True
+                tool_buffer = buffer[tag_pos:]
+                buffer = ""
+                continue
 
-                        if isinstance(genai_json, dict) and "choices" not in genai_json:
-                            error = genai_json.get("error")
-                            err_msg = genai_json.get("errMsg")
-                            if isinstance(error, dict):
-                                err_msg = error.get("message") or err_msg
-                            if err_msg:
-                                logger.warning("GenAI upstream error: %s", err_msg)
-                                yield write_sse("error", {
-                                    "type": "error",
-                                    "error": {"type": "api_error", "message": f"Upstream error: {err_msg}"},
-                                })
-                                return
+            bare_tool_match = BARE_TOOL_CALL_RE.search(buffer) if allowed_tool_names else None
+            if bare_tool_match:
+                yield from emit_text(buffer[:bare_tool_match.start()])
+                tool_detected = True
+                tool_buffer = buffer[bare_tool_match.start():]
+                buffer = ""
+                continue
 
-                        if "choices" in genai_json and len(genai_json["choices"]) > 0:
-                            choice = genai_json["choices"][0]
-                            if choice.get("finish_reason") is not None:
-                                finished = True
+            if allowed_tool_names and text_index is None and buffer.lstrip().startswith("{"):
+                continue
 
-                        content, _reasoning = extract_content_from_genai(genai_json)
+            prefix_len = _tag_prefix_len(buffer, "<tool_call")
+            if prefix_len > 0:
+                yield from emit_text(buffer[:-prefix_len])
+                buffer = buffer[-prefix_len:]
+            else:
+                yield from emit_text(buffer)
+                buffer = ""
+            continue
 
-                        if content:
-                            content = filter_thinking_text_delta(content, thinking_state)
-
-                        if content:
-                            if tool_detected:
-                                tool_buffer += content
-                                continue
-
-                            buffer += content
-                            tag_pos = buffer.find("<tool_call")
-                            if tag_pos >= 0:
-                                pre_text = buffer[:tag_pos]
-                                yield from emit_text(pre_text)
-                                tool_detected = True
-                                tool_buffer = buffer[tag_pos:]
-                                buffer = ""
-                                continue
-
-                            bare_tool_match = BARE_TOOL_CALL_RE.search(buffer) if allowed_tool_names else None
-                            if bare_tool_match:
-                                pre_text = buffer[:bare_tool_match.start()]
-                                yield from emit_text(pre_text)
-                                tool_detected = True
-                                tool_buffer = buffer[bare_tool_match.start():]
-                                buffer = ""
-                                continue
-
-                            if allowed_tool_names and not text_block_started and buffer.lstrip().startswith("{"):
-                                continue
-
-                            prefix_len = _tag_prefix_len(buffer, "<tool_call")
-                            if prefix_len > 0:
-                                safe_text = buffer[:-prefix_len]
-                                yield from emit_text(safe_text)
-                                buffer = buffer[-prefix_len:]
-                            else:
-                                yield from emit_text(buffer)
-                                buffer = ""
-
-                except json.JSONDecodeError:
-                    pass
-
+        # done：先冲刷残留文本，再输出工具调用
         stop_reason = "end_turn"
         if tool_detected:
             tool_buffer += buffer
@@ -656,15 +605,14 @@ def stream_genai_as_anthropic(
             if tool_calls:
                 if remaining:
                     yield from emit_text(remaining)
+                yield from close_thinking_block()
                 yield from close_text_block()
 
-                next_index = 1 if text_block_started else 0
                 for offset, tool_call in enumerate(tool_calls):
                     function = tool_call.get("function", {})
                     block_index = next_index + offset
                     tool_id = tool_call.get("id") or f"toolu_genai_{uuid.uuid4().hex[:24]}"
                     tool_name = function.get("name") or "tool"
-                    arguments = function.get("arguments", "{}")
                     yield write_sse("content_block_start", {
                         "type": "content_block_start",
                         "index": block_index,
@@ -680,13 +628,14 @@ def stream_genai_as_anthropic(
                         "index": block_index,
                         "delta": {
                             "type": "input_json_delta",
-                            "partial_json": tool_input_json(tool_name, arguments),
+                            "partial_json": tool_input_json(tool_name, function.get("arguments", "{}")),
                         },
                     })
                     yield write_sse("content_block_stop", {
                         "type": "content_block_stop",
                         "index": block_index,
                     })
+                next_index += len(tool_calls)
                 stop_reason = "tool_use"
             else:
                 logger.warning("Tool tag detected but parsing failed; emitting as text")
@@ -694,20 +643,19 @@ def stream_genai_as_anthropic(
         else:
             yield from emit_text(buffer)
 
+        yield from close_thinking_block()
         yield from close_text_block()
 
         # Calculate output tokens
         output_text = "".join(content_parts)
         output_tokens = max(1, len(output_text) // 4) if output_text else 0
 
-        # Send message_delta with stop_reason
         yield write_sse("message_delta", {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
             "usage": {"output_tokens": output_tokens},
         })
 
-        # Send message_stop
         yield write_sse("message_stop", {"type": "message_stop"})
 
         total_elapsed = time.monotonic() - started_at
@@ -720,10 +668,4 @@ def stream_genai_as_anthropic(
             ttft_ms,
             total_elapsed,
         )
-
-    except Exception as e:
-        logger.exception("Error in stream_genai_as_anthropic")
-        yield write_sse("error", {
-            "type": "error",
-            "error": {"type": "api_error", "message": str(e)},
-        })
+        return

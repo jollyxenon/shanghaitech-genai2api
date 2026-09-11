@@ -79,6 +79,7 @@ def chat_completions():
 
         else:
             complete_content = ""
+            complete_reasoning = ""
             for line in stream_genai_response(chat_info, messages, model, max_tokens, config):
                 if line.startswith('data: '):
                     data_str = line[6:].strip()
@@ -91,6 +92,9 @@ def chat_completions():
                             content = delta.get('content', '')
                             if content:
                                 complete_content += content
+                            reasoning = delta.get('reasoning_content', '')
+                            if reasoning:
+                                complete_reasoning += reasoning
                     except json.JSONDecodeError:
                         pass
 
@@ -118,6 +122,10 @@ def chat_completions():
                 }
                 finish_reason = "stop"
 
+            if complete_reasoning:
+                message_obj["reasoning_content"] = complete_reasoning
+
+            completion_tokens = estimate_text_tokens(complete_content + complete_reasoning)
             response = {
                 "id": completion_id,
                 "object": "chat.completion",
@@ -130,8 +138,8 @@ def chat_completions():
                 }],
                 "usage": {
                     "prompt_tokens": 0,
-                    "completion_tokens": estimate_text_tokens(complete_content),
-                    "total_tokens": estimate_text_tokens(complete_content)
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": completion_tokens
                 }
             }
             return jsonify(response)

@@ -2,7 +2,8 @@ import json
 
 from app import create_app
 from config import Config
-from provider import anthropic
+from provider import anthropic, genai
+from provider.anthropic import COMPAT_THINKING_SIGNATURE
 
 
 class DummyTokenManager:
@@ -53,8 +54,8 @@ def make_app(api_key=None):
 
 
 def test_non_streaming_messages_route_returns_anthropic_tool_use(monkeypatch):
-    monkeypatch.setattr(anthropic.model_registry, "get_root_ai_type", lambda model, token: "xinference")
-    monkeypatch.setattr(anthropic.requests, "post", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(genai.model_registry, "get_root_ai_type", lambda model, token: "xinference")
+    monkeypatch.setattr(genai.requests, "post", lambda *args, **kwargs: FakeResponse())
     client = make_app().test_client()
 
     response = client.post(
@@ -98,3 +99,38 @@ def test_auth_accepts_x_api_key_for_anthropic_clients():
 
     assert response.status_code == 200
     assert response.get_json()["input_tokens"] > 0
+
+
+def test_non_streaming_messages_route_returns_thinking_block(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def iter_lines(self):
+            chunks = [
+                {"choices": [{"delta": {"reasoning_content": "内部推理"}, "finish_reason": None}]},
+                {"choices": [{"delta": {"content": "对外回答"}, "finish_reason": None}]},
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+            ]
+            for chunk in chunks:
+                yield ("data: " + json.dumps(chunk)).encode()
+
+    monkeypatch.setattr(genai.model_registry, "get_root_ai_type", lambda model, token: "xinference")
+    monkeypatch.setattr(genai.requests, "post", lambda *args, **kwargs: FakeResponse())
+    client = make_app().test_client()
+
+    response = client.post("/v1/messages", json={
+        "model": "chatglm",
+        "stream": False,
+        "max_tokens": 100,
+        "messages": [{"role": "user", "content": "你好"}],
+    })
+
+    assert response.status_code == 200
+    content = response.get_json()["content"]
+    assert content[0] == {
+        "type": "thinking",
+        "thinking": "内部推理",
+        "signature": COMPAT_THINKING_SIGNATURE,
+    }
+    assert content[1] == {"type": "text", "text": "对外回答"}

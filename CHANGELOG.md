@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.2.0
+
+### New Features
+
+- **OpenAI Responses API**：新增 `POST /v1/responses`，可直接接入 Codex CLI（`wire_api = "responses"`）与 OpenAI Agents SDK
+  - 流式事件按官方格式输出：`response.created` / `response.in_progress` / `response.output_item.added|done` / `response.output_text.delta|done` / `response.reasoning_summary_text.delta|done` / `response.function_call_arguments.delta|done` / `response.custom_tool_call_input.delta|done` / `response.completed`
+  - 支持 Responses 的 `input` items：`message`、`function_call`、`function_call_output`、`custom_tool_call`、`reasoning`
+  - 支持 `type: "namespace"` 包裹的工具定义（Codex 的默认形态），展平其中的 function 与 custom 工具；`custom` 工具（如 apply_patch）输出为 `custom_tool_call`
+  - 每个事件带递增 `sequence_number`，`response.completed` 携带完整 `output` 与 `usage`，并回显请求的 `tools` / `tool_choice` / `parallel_tool_calls` / `store` 等字段
+  - 上游因长度截断（`finish_reason = length`）时发出 `response.incomplete`（`incomplete_details.reason = max_output_tokens`），不会误报为正常完成
+- **思维链透传**：上游 `reasoning_content` 在三个接口分别以 Chat 的 `reasoning_content`、Anthropic 的 thinking 块、Responses 的 reasoning 事件输出
+
+### Changes
+
+- `provider/genai.py` 抽出统一的 `iter_genai_stream()` 上游流迭代器，Chat / Anthropic / Responses 三个适配层共用，统一处理 401 重试与错误上报
+- Chat Completions 流式响应改为整个请求使用同一个 `chatcmpl-*` ID（此前每个 chunk 都会重新生成）
+- 工具调用参数统一序列化为合法 JSON 对象（字符串参数会被解析，Bash 的裸字符串映射为 `command`）
+- 模型名保持完全透传，不做映射
+
+### Bug Fixes
+
+- Chat Completions 工具流式路径不再丢弃 `reasoning_content`
+- Anthropic 非流式响应现在包含 thinking 块，且流式 block index 在有 thinking 时按顺序顺延（不再硬编码 text 为 0、tool 为 1）
+- Anthropic 历史里的 `thinking` / `redacted_thinking` 块不再作为普通 JSON 文本转发给上游
+
+### Notes
+
+- Anthropic thinking 的 `signature` 是明确的兼容占位值 `genai-compat-no-signature`，不是真实签名
+- Responses API 不提供服务端会话存储，也不支持 `previous_response_id`
+
 ## v2.1.0
 
 ### Changes

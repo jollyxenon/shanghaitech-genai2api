@@ -2,6 +2,7 @@ from api.chat import chat_bp
 from api.models import models_bp
 from api.health import health_bp
 from api.messages import messages_bp
+from api.responses import responses_bp
 
 
 def register_routes(app):
@@ -11,6 +12,7 @@ def register_routes(app):
 
     if api_format in ("openai", "both"):
         app.register_blueprint(chat_bp)
+        app.register_blueprint(responses_bp)
 
     if api_format in ("anthropic", "both"):
         app.register_blueprint(messages_bp)

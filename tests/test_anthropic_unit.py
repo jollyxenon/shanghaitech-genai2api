@@ -1,7 +1,8 @@
 import json
 
-from provider import anthropic
+from provider import anthropic, genai
 from provider.anthropic import (
+    COMPAT_THINKING_SIGNATURE,
     anthropic_allowed_tool_names,
     anthropic_messages_to_genai_format,
     normalize_tool_input,
@@ -122,8 +123,8 @@ def test_stream_genai_as_anthropic_emits_tool_use_blocks(monkeypatch):
     class DummyConfig:
         token_manager = DummyTokenManager()
 
-    monkeypatch.setattr(anthropic.model_registry, "get_root_ai_type", lambda model, token: "xinference")
-    monkeypatch.setattr(anthropic.requests, "post", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(genai.model_registry, "get_root_ai_type", lambda model, token: "xinference")
+    monkeypatch.setattr(genai.requests, "post", lambda *args, **kwargs: FakeResponse())
 
     events = _events(
         stream_genai_as_anthropic(
@@ -184,8 +185,8 @@ def test_stream_genai_as_anthropic_emits_bare_malformed_json_tool_use(monkeypatc
     class DummyConfig:
         token_manager = DummyTokenManager()
 
-    monkeypatch.setattr(anthropic.model_registry, "get_root_ai_type", lambda model, token: "xinference")
-    monkeypatch.setattr(anthropic.requests, "post", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(genai.model_registry, "get_root_ai_type", lambda model, token: "xinference")
+    monkeypatch.setattr(genai.requests, "post", lambda *args, **kwargs: FakeResponse())
 
     events = _events(
         stream_genai_as_anthropic(
@@ -235,8 +236,8 @@ def test_stream_genai_as_anthropic_filters_split_thinking_blocks(monkeypatch):
     class DummyConfig:
         token_manager = DummyTokenManager()
 
-    monkeypatch.setattr(anthropic.model_registry, "get_root_ai_type", lambda model, token: "xinference")
-    monkeypatch.setattr(anthropic.requests, "post", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(genai.model_registry, "get_root_ai_type", lambda model, token: "xinference")
+    monkeypatch.setattr(genai.requests, "post", lambda *args, **kwargs: FakeResponse())
 
     events = _events(
         stream_genai_as_anthropic(
@@ -279,3 +280,104 @@ def test_normalize_tool_input_maps_claude_code_tool_aliases():
         "pattern": "tests/*.py",
         "path": "/tmp/project",
     }
+
+
+def _dummy_config_with_upstream(monkeypatch, chunks):
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def iter_lines(self):
+            for chunk in chunks:
+                yield ("data: " + json.dumps(chunk)).encode()
+
+    class DummyTokenManager:
+        def force_refresh(self):
+            return None
+
+    class DummyConfig:
+        token_manager = DummyTokenManager()
+
+    monkeypatch.setattr(genai.model_registry, "get_root_ai_type", lambda model, token: "xinference")
+    monkeypatch.setattr(genai.requests, "post", lambda *args, **kwargs: FakeResponse())
+    return DummyConfig()
+
+
+def test_stream_genai_as_anthropic_emits_thinking_block_before_text(monkeypatch):
+    config = _dummy_config_with_upstream(monkeypatch, [
+        {"choices": [{"delta": {"reasoning_content": "先想一想"}, "finish_reason": None}]},
+        {"choices": [{"delta": {"content": "答案"}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+    ])
+
+    events = _events(stream_genai_as_anthropic(
+        [{"role": "user", "content": "提问"}], "chatglm", 1000, "token", config,
+    ))
+
+    starts = [
+        (data["index"], data["content_block"]["type"])
+        for event, data in events
+        if event == "content_block_start"
+    ]
+    assert starts == [(0, "thinking"), (1, "text")]
+
+    thinking = "".join(
+        data["delta"]["thinking"]
+        for event, data in events
+        if event == "content_block_delta" and data["delta"]["type"] == "thinking_delta"
+    )
+    assert thinking == "先想一想"
+
+    signatures = [
+        data["delta"]["signature"]
+        for event, data in events
+        if event == "content_block_delta" and data["delta"]["type"] == "signature_delta"
+    ]
+    assert signatures == [COMPAT_THINKING_SIGNATURE]
+
+    text = "".join(
+        data["delta"]["text"]
+        for event, data in events
+        if event == "content_block_delta" and data["delta"]["type"] == "text_delta"
+    )
+    assert text == "答案"
+
+
+def test_stream_genai_as_anthropic_drops_reasoning_after_text(monkeypatch):
+    config = _dummy_config_with_upstream(monkeypatch, [
+        {"choices": [{"delta": {"content": "正文"}, "finish_reason": None}]},
+        {"choices": [{"delta": {"reasoning_content": "迟到的思考"}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+    ])
+
+    events = _events(stream_genai_as_anthropic(
+        [{"role": "user", "content": "提问"}], "chatglm", 1000, "token", config,
+    ))
+
+    assert not any(event == "content_block_start" and data.get("content_block", {}).get("type") == "thinking"
+                   for event, data in events)
+    assert not any(
+        data.get("delta", {}).get("type") == "thinking_delta" for _, data in events
+    )
+
+
+def test_anthropic_history_thinking_blocks_are_not_forwarded():
+    body = {
+        "model": "chatglm",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "内部推理", "signature": COMPAT_THINKING_SIGNATURE},
+                    {"type": "text", "text": "对外回答"},
+                ],
+            },
+            {"role": "user", "content": "继续"},
+        ],
+    }
+
+    _, messages, _ = anthropic_messages_to_genai_format(body, "token")
+    joined = json.dumps(messages, ensure_ascii=False)
+    assert "内部推理" not in joined
+    assert COMPAT_THINKING_SIGNATURE not in joined
+    assert "对外回答" in joined

@@ -699,6 +699,22 @@ def _extract_numbered_tool_calls(cleaned, allowed_tool_names):
     return tool_calls, _clean_remaining_text(remaining)
 
 
+def _coerce_tool_arguments(tool_name, arguments):
+    """把模型解析出的参数统一成 dict，保证序列化后是合法 JSON 对象。"""
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        parsed = _load_relaxed_json(arguments)
+        if isinstance(parsed, dict):
+            return parsed
+        if tool_name == "Bash":
+            return {"command": arguments}
+        return {"arguments": arguments}
+    if arguments is None:
+        return {}
+    return {"arguments": arguments}
+
+
 def extract_tool_calls(content, allowed_tool_names=None):
     cleaned = strip_think_blocks(content)
 
@@ -758,8 +774,8 @@ def extract_tool_calls(content, allowed_tool_names=None):
                 "function": {
                     "name": call["name"],
                     "arguments": json.dumps(
-                        call.get("arguments", {}),
-                        ensure_ascii=False
+                        _coerce_tool_arguments(call["name"], call.get("arguments", {})),
+                        ensure_ascii=False,
                     )
                 }
             })
