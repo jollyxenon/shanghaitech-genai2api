@@ -30,7 +30,7 @@ def extract_content_from_genai(response_data):
         if "choices" in response_data and len(response_data["choices"]) > 0:
             delta = response_data["choices"][0].get("delta", {})
             content = delta.get("content") or None
-            reasoning = delta.get("reasoning_content") or None
+            reasoning = delta.get("reasoning_content") or delta.get("reasoning") or None
             return content, reasoning
     except (KeyError, IndexError, TypeError):
         pass
@@ -74,9 +74,13 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
     root_ai_type = model_registry.get_root_ai_type(model, token)
     headers = build_genai_headers(token)
     normalized_messages = [normalize_message_content(msg) for msg in messages]
+    for index in range(len(normalized_messages) - 1, -1, -1):
+        if normalized_messages[index].get("role") == "user":
+            del normalized_messages[index]
+            break
 
     genai_data = {
-        "chatInfo": "",
+        "chatInfo": chat_info,
         "messages": normalized_messages,
         "type": "3",
         "stream": True,
@@ -155,34 +159,19 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
                             yield make_error_chunk(f"Upstream error: {err_msg}", model)
                             return
 
-                        if "choices" in genai_json and len(genai_json["choices"]) > 0:
-                            choice = genai_json["choices"][0]
-                            if choice.get("finish_reason") is not None:
-                                finished = True
+                        if isinstance(genai_json, dict) and "choices" not in genai_json:
+                            error = genai_json.get("error")
+                            err_msg = genai_json.get("errMsg")
+                            if isinstance(error, dict):
+                                err_msg = error.get("message") or err_msg
+                            if err_msg:
+                                logger.warning("GenAI upstream error: %s", err_msg)
+                                yield make_error_chunk(f"Upstream error: {err_msg}", model)
+                                return
 
-                        if finished:
-                            log_stream_metrics(
-                                model,
-                                started_at,
-                                first_token_at,
-                                "".join(content_parts),
-                                "".join(reasoning_parts),
-                            )
-                            final_response = {
-                                "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
-                                "object": "chat.completion.chunk",
-                                "created": int(datetime.now().timestamp()),
-                                "model": model,
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {},
-                                    "finish_reason": "stop"
-                                }]
-                            }
-                            emitted_done = True
-                            yield f"data: {json.dumps(final_response)}\n\n"
-                            yield "data: [DONE]\n\n"
-                            break
+                        finish_reason = None
+                        if "choices" in genai_json and len(genai_json["choices"]) > 0:
+                            finish_reason = genai_json["choices"][0].get("finish_reason")
 
                         content, reasoning = extract_content_from_genai(genai_json)
 
@@ -211,6 +200,31 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
                                 }]
                             }
                             yield f"data: {json.dumps(openai_response)}\n\n"
+
+                        if finish_reason is not None:
+                            finished = True
+                            log_stream_metrics(
+                                model,
+                                started_at,
+                                first_token_at,
+                                "".join(content_parts),
+                                "".join(reasoning_parts),
+                            )
+                            final_response = {
+                                "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+                                "object": "chat.completion.chunk",
+                                "created": int(datetime.now().timestamp()),
+                                "model": model,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "stop"
+                                }]
+                            }
+                            emitted_done = True
+                            yield f"data: {json.dumps(final_response)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            break
 
                 except json.JSONDecodeError as e:
                     logger.debug("JSON decode error: %s, line: %s", e, line_str[:200])

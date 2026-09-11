@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.1.0
+
+### Changes
+
+- 依赖管理与运行由 `uv` 迁移到 `pixi`
+- 移除 `uv.lock`、`.python-version` 与 `pyproject.toml`，由 `pixi.toml` 作为唯一清单
+- 新增 `pixi` 任务：`pixi run serve` 启动代理（等价于 `python main.py`），`pixi run test` 运行单元测试
+- 支持从项目根目录 `.env` 读取登录凭据、端口和 API 格式，默认端口为 `31100`
+- README 与工具说明同步改用 `pixi` 命令
+- 新增 `tools/context_probe.py`：实测 GenAI 模型真实上下文长度，提供 `pixi run context-probe` 任务
+
+### Bug Fixes
+
+- 修正请求构造：把最后一条 user 消息作为 `chatInfo`（当前提问），其余作为历史 `messages` 传入上游，避免提问重复
+- 兼容上游以 `reasoning` 字段返回思考内容（原先只识别 `reasoning_content`）
+- 处理上游返回 `choices` 缺失但带 `error`/`errMsg` 的响应，避免静默失败
+
 ## v2.0.0
 
 ### Breaking Changes

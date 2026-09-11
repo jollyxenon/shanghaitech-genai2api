@@ -2,17 +2,22 @@ import argparse
 import logging
 import os
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from auth.cas_login import LoginError
 from auth.token_manager import TokenManager
 from config import Config
 from app import create_app
 
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 parser = argparse.ArgumentParser(description='GenAI Flask API Server')
 parser.add_argument('--token', type=str, default=None,
                     help='JWT token (eyJ...) or student_id@password for auto-login (or set GENAI_TOKEN)')
-parser.add_argument('--port', type=int, default=5000,
-                    help='Flask server port (default: 5000)')
+parser.add_argument('--port', type=int, default=None,
+                    help='Flask server port (or set PORT; default: 31100)')
 parser.add_argument('--debug', action='store_true',
                     help='Enable debug logging')
 parser.add_argument('--api-key', type=str, default=None,
@@ -42,7 +47,7 @@ except (LoginError, ValueError) as e:
 
 config = Config(
     token_manager=token_manager,
-    port=args.port,
+    port=args.port if args.port is not None else int(os.environ.get("PORT", "31100")),
     api_key=args.api_key or os.environ.get("API_KEY"),
     debug=args.debug,
     api_format=args.api_format or os.environ.get("API_FORMAT", "both"),

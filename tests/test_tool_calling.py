@@ -1,6 +1,6 @@
 """
 Tool Calling 测试脚本
-用法: uv run test_tool_calling.py [--base-url http://localhost:5000] [--model GPT-4.1]
+用法: pixi run python tests/test_tool_calling.py [--base-url http://localhost:31100] [--model GPT-4.1]
 
 测试场景:
   1. 单次 tool call (天气查询)
@@ -16,12 +16,12 @@ import requests
 import sys
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--base-url', default='http://localhost:5000')
+parser.add_argument('--base-url', default='http://localhost:31100')
 parser.add_argument('--model', default='GPT-4.1')
 
 __test__ = False
 
-BASE_URL = 'http://localhost:5000'
+BASE_URL = 'http://localhost:31100'
 MODEL = 'GPT-4.1'
 
 # 定义测试用的 tools

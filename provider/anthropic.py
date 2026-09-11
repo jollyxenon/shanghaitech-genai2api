@@ -229,7 +229,7 @@ def extract_content_from_genai(response_data: Dict[str, Any]) -> Tuple[Optional[
         if "choices" in response_data and len(response_data["choices"]) > 0:
             delta = response_data["choices"][0].get("delta", {})
             content = delta.get("content") or None
-            reasoning = delta.get("reasoning_content") or None
+            reasoning = delta.get("reasoning_content") or delta.get("reasoning") or None
             return content, reasoning
     except (KeyError, IndexError, TypeError):
         pass
@@ -456,10 +456,17 @@ def stream_genai_as_anthropic(
 
     headers = build_genai_headers(token)
     root_ai_type = model_registry.get_root_ai_type(model, token)
+    history_messages = list(messages)
+    chat_info = ""
+    for index in range(len(history_messages) - 1, -1, -1):
+        if history_messages[index].get("role") == "user":
+            chat_info = anthropic_content_to_text(history_messages[index].get("content", ""))
+            del history_messages[index]
+            break
 
     genai_data = {
-        "chatInfo": "",
-        "messages": messages,
+        "chatInfo": chat_info,
+        "messages": history_messages,
         "type": "3",
         "stream": True,
         "aiType": model,
@@ -575,6 +582,19 @@ def stream_genai_as_anthropic(
                                 "error": {"type": "api_error", "message": f"Upstream error: {err_msg}"},
                             })
                             return
+
+                        if isinstance(genai_json, dict) and "choices" not in genai_json:
+                            error = genai_json.get("error")
+                            err_msg = genai_json.get("errMsg")
+                            if isinstance(error, dict):
+                                err_msg = error.get("message") or err_msg
+                            if err_msg:
+                                logger.warning("GenAI upstream error: %s", err_msg)
+                                yield write_sse("error", {
+                                    "type": "error",
+                                    "error": {"type": "api_error", "message": f"Upstream error: {err_msg}"},
+                                })
+                                return
 
                         if "choices" in genai_json and len(genai_json["choices"]) > 0:
                             choice = genai_json["choices"][0]

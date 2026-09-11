@@ -2,7 +2,7 @@
 # 快速 curl 测试 tool calling
 # 用法: bash test_curl.sh
 
-BASE_URL="${1:-http://localhost:5000}"
+BASE_URL="${1:-http://localhost:31100}"
 echo "Testing: $BASE_URL"
 
 echo ""
