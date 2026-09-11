@@ -6,7 +6,7 @@ from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
 from provider.anthropic import parse_tool_arguments
 from provider.genai import estimate_text_tokens, iter_genai_stream, split_history_messages
-from tools.parsing import extract_tool_calls, _tag_prefix_len
+from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
 from tools.prompts import flatten_message_content, inject_tool_prompt
 
 logger = logging.getLogger(__name__)
@@ -547,7 +547,7 @@ def stream_genai_as_responses(
                 continue
 
             buffer += content
-            tag_pos = buffer.find("<tool_call")
+            tag_pos = find_tool_call_open(buffer)
             if tag_pos >= 0:
                 pre = buffer[:tag_pos]
                 if pre:
@@ -560,7 +560,7 @@ def stream_genai_as_responses(
                 buffer = ""
                 continue
 
-            prefix_len = _tag_prefix_len(buffer, "<tool_call")
+            prefix_len = tool_call_prefix_len(buffer)
             if prefix_len > 0:
                 safe = buffer[:-prefix_len]
                 if safe:
@@ -595,11 +595,12 @@ def stream_genai_as_responses(
                     yield from message_delta(remaining)
             else:
                 logger.warning("Tool tag detected but parsing failed; emitting as text")
-                if tool_buffer:
+                emit_target = remaining if remaining is not None else tool_buffer
+                if emit_target:
                     if message_item_id is None:
                         yield from start_message()
-                    message_parts.append(tool_buffer)
-                    yield from message_delta(tool_buffer)
+                    message_parts.append(emit_target)
+                    yield from message_delta(emit_target)
                 tool_calls = []
 
             yield from finish_message()

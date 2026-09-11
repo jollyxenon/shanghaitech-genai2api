@@ -1,9 +1,96 @@
+import ast
 import json
 import logging
 import re
 import uuid
 
 logger = logging.getLogger(__name__)
+
+# 部分上游模型会自行输出 GenAI 原生的 DSML 工具标记，而不是代理注入的
+# <tool_call> 格式；同一模型还可能把标签写成 call / _call 等变体。
+# 这里把所有以 call 结尾的 DSML 标签归一化成 <tool_call>，让解析器与流式检测统一处理。
+# 同时接受全角 ｜ 与半角 | 两种竖线。
+DSML_OPEN_PREFIX_FULLWIDTH = "<｜DSML｜"
+DSML_OPEN_PREFIX_ASCII = "<|DSML|"
+TOOL_CALL_OPEN_MARKERS = (
+    "<tool_call",
+    DSML_OPEN_PREFIX_FULLWIDTH,
+    DSML_OPEN_PREFIX_ASCII,
+)
+DSML_OPEN_TAG_RE = re.compile(r"<\s*[|｜]\s*DSML\s*[|｜]\s*([A-Za-z_][A-Za-z0-9_]*)?\s*>", re.IGNORECASE)
+DSML_CLOSE_TAG_RE = re.compile(r"</\s*[|｜]\s*DSML\s*[|｜]\s*([A-Za-z_][A-Za-z0-9_]*)?\s*>", re.IGNORECASE)
+# 变体：<｜DSML｜ name="read">{...}，工具名写在属性里。
+DSML_ATTR_OPEN_TAG_RE = re.compile(
+    r"<\s*[|｜]\s*DSML\s*[|｜]\s*name\s*=\s*[\"']([^\"']+)[\"']\s*>",
+    re.IGNORECASE,
+)
+# 带属性的 DSML 标签（如 <｜DSML｜invoke name="x">），仅用于删除非 call 标签。
+DSML_ANY_TAG_RE = re.compile(r"</?\s*[|｜]\s*DSML\s*[|｜]\s*[^>]*>", re.IGNORECASE)
+
+
+def _is_tool_call_tag_name(name):
+    # tool_call / call / _call / l_call 都算；空标签名 <｜DSML｜> 当普通工具标签处理；
+    # 复数 tool_calls 是外层包裹标签，不算。
+    if not name:
+        return True
+    return name.lower().endswith("call")
+
+
+def normalize_tool_call_tags(text):
+    """把 DSML 工具标记归一化为 <tool_call>，其余文本原样保留。"""
+    if not text or "DSML" not in text:
+        return text
+    changed = False
+
+    def replace_open(match):
+        nonlocal changed
+        if _is_tool_call_tag_name(match.group(1)):
+            changed = True
+            return "<tool_call>"
+        return match.group(0)
+
+    def replace_close(match):
+        nonlocal changed
+        if _is_tool_call_tag_name(match.group(1)):
+            changed = True
+            return "</tool_call>"
+        return match.group(0)
+
+    normalized = DSML_OPEN_TAG_RE.sub(replace_open, text)
+    normalized = DSML_CLOSE_TAG_RE.sub(replace_close, normalized)
+    # 工具名在属性里的变体：归一化成 <tool_call name="...">，复用属性解析路径。
+    normalized = DSML_ATTR_OPEN_TAG_RE.sub(r'<tool_call name="\1">', normalized)
+    if changed or normalized != text:
+        logger.info("Normalized DSML tool tag(s) to <tool_call>")
+    return normalized
+
+
+def strip_dsml_tags(text):
+    """删除所有 DSML 标签（含带属性的 invoke / parameter），保留其中正文。"""
+    if not text or "DSML" not in text:
+        return text
+    return DSML_ANY_TAG_RE.sub("", text)
+
+
+def find_tool_call_open(text):
+    """返回最早的完整工具标记起始下标（<tool_call 或 DSML 形式）；没有则返回 -1。"""
+    best = -1
+    for marker in TOOL_CALL_OPEN_MARKERS:
+        position = text.find(marker)
+        if position >= 0 and (best < 0 or position < best):
+            best = position
+    return best
+
+
+def tool_call_prefix_len(text):
+    """返回末尾属于某个工具标记前缀的长度，供流式解析回退（hold back）使用。"""
+    longest = 0
+    for marker in TOOL_CALL_OPEN_MARKERS:
+        length = _tag_prefix_len(text, marker)
+        if length > longest:
+            longest = length
+    return longest
+
 
 COMMON_TOOL_ARG_KEYS = (
     "notebook_path",
@@ -130,6 +217,17 @@ def _load_relaxed_json(raw):
             pass
 
     stripped = sanitized.strip()
+
+    # 部分模型会把工具参数写成 Python 字面量（单引号、True/False/None），
+    # 这里回退到 ast.literal_eval 兼容这种形态。
+    if stripped[:1] in ("{", "["):
+        try:
+            literal = ast.literal_eval(stripped)
+            if isinstance(literal, (dict, list)):
+                return literal
+        except (ValueError, SyntaxError):
+            pass
+
     if not stripped.startswith("{"):
         return None
 
@@ -198,7 +296,11 @@ def _normalize_tool_payload(payload, tool_name=None):
 
     if "name" in payload:
         name = _clean_tool_name(payload["name"])
-        arguments = payload.get("arguments", {})
+        if "arguments" in payload:
+            arguments = payload["arguments"]
+        else:
+            # 有些模型会把参数直接平铺在 name 旁边（缺少 arguments 包裹）。
+            arguments = {key: value for key, value in payload.items() if key != "name"}
         if name == "Bash" and isinstance(arguments, str):
             arguments = {"command": arguments}
         return {
@@ -423,6 +525,20 @@ def _parse_tool_call_body(raw, tool_name=None):
     if malformed_call:
         return malformed_call
 
+    # 变体：标签内先写裸工具名，再直接跟参数 JSON（缺少 {"name": ...} 包裹）。
+    named_json = re.match(
+        r'^([A-Za-z_][A-Za-z0-9_.-]*)\s*\n\s*(\{.*\})\s*$',
+        normalized_raw,
+        re.DOTALL,
+    )
+    if named_json:
+        arguments = _load_relaxed_json(named_json.group(2))
+        if isinstance(arguments, dict):
+            return {
+                "name": _clean_tool_name(named_json.group(1)),
+                "arguments": arguments,
+            }
+
     tagged_arguments = _parse_tagged_arguments(raw, tool_name=tool_name)
     if tagged_arguments:
         return tagged_arguments
@@ -487,6 +603,7 @@ def _clean_remaining_text(text):
     cleaned = re.sub(r'</?tool_calls\b[^>]*>', '', cleaned)
     cleaned = re.sub(r'</?tool_\d+>', '', cleaned)
     cleaned = re.sub(r'</?tool_utils\b[^>]*>', '', cleaned)
+    cleaned = strip_dsml_tags(cleaned)
     cleaned = cleaned.replace('</think>', '')
     cleaned = re.sub(r'^\s*\[\]\s*$', '', cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
@@ -716,7 +833,7 @@ def _coerce_tool_arguments(tool_name, arguments):
 
 
 def extract_tool_calls(content, allowed_tool_names=None):
-    cleaned = strip_think_blocks(content)
+    cleaned = normalize_tool_call_tags(strip_think_blocks(content))
 
     cleaned = re.sub(
         r'```(?:xml|json|plaintext|text)?\s*\n?\s*(<tool_call\b[^>]*>.*?</tool_call>)\s*\n?\s*```',
@@ -752,6 +869,8 @@ def extract_tool_calls(content, allowed_tool_names=None):
 
         logger.debug("No <tool_call> tags found in content (%d chars): %s",
                      len(content), content[:500])
+        if "DSML" in content:
+            return None, _clean_remaining_text(cleaned) or ""
         return None, content
 
     logger.debug("Found %d <tool_call> match(es)", len(matches))
@@ -790,6 +909,8 @@ def extract_tool_calls(content, allowed_tool_names=None):
         )
         if fallback_tool_calls:
             return fallback_tool_calls, fallback_remaining
+        if "DSML" in content:
+            return None, _clean_remaining_text(cleaned) or ""
         return None, content
 
     if remaining is None:

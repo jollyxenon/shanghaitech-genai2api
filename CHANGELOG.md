@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### New Features
+
+- **DSML 工具标记兼容**：部分模型会绕过注入的 `<tool_call>`，直接输出 GenAI 原生的 DSML 标记。代理现在统一处理这些变体：
+  - 归一化 `<｜DSML｜tool_call>` / `<｜DSML｜call>` / `<｜DSML｜_call>` / `<｜DSML｜l_call>`（含半角 `|`）为 `<tool_call>`
+  - 支持工具名写在属性里的变体 `<｜DSML｜ name="Read">`
+  - 兼容空标签名 `<｜DSML｜>` 与混用开闭标签（如 `<tool_call>` 配 `</｜DSML｜>`）
+  - 三种接口（Chat / Anthropic / Responses）的流式检测都能识别 DSML 起始标记
+
+### Changes
+
+- 工具参数解析兼容 Python 字面量（单引号字符串、`True`/`False`/`None`），以及缺少 `arguments` 包裹、直接平铺参数键的形态
+- 标签内“裸工具名 + 参数 JSON”（如 `read\n{"path": ...}`）也能解析
+
+### Bug Fixes
+
+- 移除 Anthropic 流式文本里对 DSML 标签的预先删除：它会在解析器看到工具调用之前把标签删掉，导致工具调用丢失、属性碎片（`name="...">`）泄漏为正文
+- 解析失败时输出的是清理过 DSML 标签的文本，而不是原始标签内容
+
 ## v2.2.0
 
 ### New Features

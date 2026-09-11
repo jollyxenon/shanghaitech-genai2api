@@ -8,7 +8,7 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from config import model_registry
 from provider.genai import iter_genai_stream
-from tools.parsing import extract_tool_calls, _tag_prefix_len
+from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
 from tools.prompts import inject_tool_prompt
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 COMPAT_THINKING_SIGNATURE = "genai-compat-no-signature"
 BARE_TOOL_CALL_RE = re.compile(r'\{\s*"name"\s*:\s*"')
 
-DSML_OPEN_RE = r"<\s*[|｜]DSML[|｜](?:tool_calls|invoke|parameter)\b"
-DSML_CLOSE_RE = r"</\s*[|｜]DSML[|｜](?:tool_calls|invoke|parameter)\s*>"
 THINK_OPEN_PREFIX = "<think"
 THINK_CLOSE = "</think>"
 
@@ -230,15 +228,12 @@ def anthropic_messages_to_genai_format(body: Dict[str, Any], token: str) -> Tupl
 
 
 def filter_thinking_and_dsml(text: str) -> str:
-    """Filter out <think>...</think> and DSML tool tags."""
-    # Remove thinking tags
-    text = re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    """Filter out <think>...</think> blocks.
 
-    # Remove DSML tags
-    text = re.sub(DSML_OPEN_RE, "", text, flags=re.IGNORECASE)
-    text = re.sub(DSML_CLOSE_RE, "", text, flags=re.IGNORECASE)
-
-    return text
+    DSML 工具标签不再在这里删除：它们由 tools.parsing 统一归一化，
+    在检测之前删掉标签会让解析器看不到工具调用。
+    """
+    return re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
 
 
 def partial_marker_start(text: str, position: int, marker: str) -> int:
@@ -565,7 +560,7 @@ def stream_genai_as_anthropic(
                 continue
 
             buffer += content
-            tag_pos = buffer.find("<tool_call")
+            tag_pos = find_tool_call_open(buffer)
             if tag_pos >= 0:
                 yield from emit_text(buffer[:tag_pos])
                 tool_detected = True
@@ -584,7 +579,7 @@ def stream_genai_as_anthropic(
             if allowed_tool_names and text_index is None and buffer.lstrip().startswith("{"):
                 continue
 
-            prefix_len = _tag_prefix_len(buffer, "<tool_call")
+            prefix_len = tool_call_prefix_len(buffer)
             if prefix_len > 0:
                 yield from emit_text(buffer[:-prefix_len])
                 buffer = buffer[-prefix_len:]
@@ -639,7 +634,7 @@ def stream_genai_as_anthropic(
                 stop_reason = "tool_use"
             else:
                 logger.warning("Tool tag detected but parsing failed; emitting as text")
-                yield from emit_text(tool_buffer)
+                yield from emit_text(remaining if remaining is not None else tool_buffer)
         else:
             yield from emit_text(buffer)
 

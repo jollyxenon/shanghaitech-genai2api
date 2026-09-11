@@ -9,7 +9,7 @@ import requests
 
 from config import GENAI_URL, build_genai_headers, model_registry
 from errors import make_error_chunk
-from tools.parsing import extract_tool_calls, _tag_prefix_len
+from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
 from tools.prompts import flatten_message_content, normalize_message_content
 
 logger = logging.getLogger(__name__)
@@ -263,7 +263,6 @@ def stream_genai_response_with_tools(
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(datetime.now().timestamp())
 
-    OPEN_TAG = "<tool_call"
     buffer = ""
     tool_buffer = ""
     sent_role = False
@@ -315,7 +314,7 @@ def stream_genai_response_with_tools(
 
             buffer += content
 
-            tag_pos = buffer.find(OPEN_TAG)
+            tag_pos = find_tool_call_open(buffer)
             if tag_pos >= 0:
                 pre = buffer[:tag_pos]
                 if pre.strip():
@@ -325,7 +324,7 @@ def stream_genai_response_with_tools(
                 buffer = ""
                 continue
 
-            plen = _tag_prefix_len(buffer, OPEN_TAG)
+            plen = tool_call_prefix_len(buffer)
             if plen > 0:
                 safe = buffer[:-plen]
                 if safe:
@@ -377,7 +376,7 @@ def stream_genai_response_with_tools(
                 return
 
             logger.warning("Tool tag detected but parsing failed — emitting as text")
-            yield emit({"content": tool_buffer})
+            yield emit({"content": remaining if remaining is not None else tool_buffer})
             yield make_chunk({}, finish_reason="stop")
             yield "data: [DONE]\n\n"
             return

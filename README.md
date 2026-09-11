@@ -125,6 +125,7 @@ wire_api = "responses"
 - **Anthropic thinking 签名是占位值**：上游 GenAI 没有 Anthropic 意义上的签名，代理返回 `genai-compat-no-signature`。历史里的 thinking 块会被忽略，不会转发给上游。
 - **只有独立 reasoning 字段会被当成思维链透传**：若模型把思考写进正文的 `<think>...</think>` 标签（而不是单独的 `reasoning` / `reasoning_content` 字段），这部分会被过滤掉，以免思考内容混进回答。
 - **上游是文本模型**：function calling 依赖 prompt 注入 + 文本解析（`<tool_call>` 标记），模型不按格式输出时可能解析失败，此时工具标记会作为普通文本返回。
+- **兼容 GenAI 原生 DSML 标记**：部分模型会自行输出 `<｜DSML｜tool_call>`、`<｜DSML｜call>`、`<｜DSML｜_call>`、`<｜DSML｜ name="Tool">` 等 DSML 变体，代理会统一归一化为 `<tool_call>` 再解析；标签内的参数同时兼容 JSON 与 Python 字面量（单引号、`True`/`None`）。模型输出严重残缺时仍可能解析失败。
 
 ## 上下文探测工具
 
