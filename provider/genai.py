@@ -8,7 +8,7 @@ from datetime import datetime
 import requests
 
 from config import GENAI_URL, build_genai_headers, model_registry
-from errors import make_error_chunk
+from errors import UpstreamError, make_error_chunk
 from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
 from tools.prompts import flatten_message_content, normalize_message_content
 
@@ -184,6 +184,28 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
         yield {"type": "error", "message": str(e)}
 
 
+def collect_genai_response(chat_info, messages, model, max_tokens, config):
+    """非流式收集上游输出，返回 (content, reasoning, finish_reason)。
+
+    上游错误直接抛 UpstreamError，不能像以前那样解析 SSE 失败就丢掉。
+    """
+    content_parts = []
+    reasoning_parts = []
+    finish_reason = None
+    history = split_history_messages(messages)
+    for event in iter_genai_stream(chat_info, history, model, max_tokens, config):
+        if event["type"] == "error":
+            raise UpstreamError(event["message"])
+        if event["type"] == "delta":
+            if event.get("content"):
+                content_parts.append(event["content"])
+            if event.get("reasoning"):
+                reasoning_parts.append(event["reasoning"])
+        elif event["type"] == "done":
+            finish_reason = event.get("finish_reason")
+    return "".join(content_parts), "".join(reasoning_parts), finish_reason
+
+
 def stream_genai_response(chat_info, messages, model, max_tokens, config):
     """OpenAI Chat Completions 兼容的流式响应。"""
     started_at = time.monotonic()
@@ -217,7 +239,7 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
 
     for event in iter_genai_stream(chat_info, history, model, max_tokens, config):
         if event["type"] == "error":
-            yield make_error_chunk(event["message"], model, completion_id=completion_id)
+            yield make_error_chunk(event["message"])
             return
 
         if event["type"] == "delta":
@@ -291,7 +313,7 @@ def stream_genai_response_with_tools(
 
     for event in iter_genai_stream(chat_info, history, model, max_tokens, config):
         if event["type"] == "error":
-            yield make_error_chunk(event["message"], model, completion_id=completion_id)
+            yield make_error_chunk(event["message"])
             return
 
         if event["type"] == "delta":

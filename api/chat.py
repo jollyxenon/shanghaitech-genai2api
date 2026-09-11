@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 import uuid
@@ -6,10 +5,11 @@ from datetime import datetime
 
 from flask import Blueprint, current_app, request, jsonify, stream_with_context, Response
 
-from errors import openai_error
+from errors import UpstreamError, openai_error
 from tools.prompts import inject_tool_prompt
 from tools.parsing import extract_tool_calls
 from provider.genai import (
+    collect_genai_response,
     convert_messages_to_genai_format,
     estimate_text_tokens,
     stream_genai_response,
@@ -78,25 +78,13 @@ def chat_completions():
             )
 
         else:
-            complete_content = ""
-            complete_reasoning = ""
-            for line in stream_genai_response(chat_info, messages, model, max_tokens, config):
-                if line.startswith('data: '):
-                    data_str = line[6:].strip()
-                    if data_str == '[DONE]':
-                        continue
-                    try:
-                        data = json.loads(data_str)
-                        if 'choices' in data and data['choices']:
-                            delta = data['choices'][0].get('delta', {})
-                            content = delta.get('content', '')
-                            if content:
-                                complete_content += content
-                            reasoning = delta.get('reasoning_content', '')
-                            if reasoning:
-                                complete_reasoning += reasoning
-                    except json.JSONDecodeError:
-                        pass
+            try:
+                complete_content, complete_reasoning, finish_reason = collect_genai_response(
+                    chat_info, messages, model, max_tokens, config
+                )
+            except UpstreamError as e:
+                logger.warning("[%s] upstream error: %s", request_id, e)
+                return openai_error(str(e), error_type="upstream_error", status=502)
 
             completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
 
