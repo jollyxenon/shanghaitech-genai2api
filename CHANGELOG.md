@@ -15,8 +15,18 @@
 - 工具参数解析兼容 Python 字面量（单引号字符串、`True`/`False`/`None`），以及缺少 `arguments` 包裹、直接平铺参数键的形态
 - 标签内“裸工具名 + 参数 JSON”（如 `read\n{"path": ...}`）也能解析
 
+### Changes
+
+- 上游请求超时由硬编码的 60 秒改为 300 秒（`UPSTREAM_TIMEOUT`），避免大 prompt 首 token 慢被误判为失败
+- 流式 Chat 的上游错误改为标准 `{"error": {...}}` 事件，不再把错误文本塞进 `delta.content`
+- `max_tokens` 由代理按估算 token 本地强制生效，命中上限时 Chat `finish_reason` 返回 `length`、Anthropic `stop_reason` 返回 `max_tokens`
+- `usage.prompt_tokens` / Anthropic `input_tokens` 改为按请求消息估算，不再是写死的 0
+- `tool_choice` 指定单个函数时收窄允许工具集合，输出层同时过滤其它工具调用
+- `reasoning_effort` / `thinking.budget_tokens` / `reasoning.effort` 被上游忽略时记录 warning，并在 README 声明
+
 ### Bug Fixes
 
+- 修复 Chat 非流式路径解析流式错误块失败就 `pass`，导致上游错误被静默丢弃成 HTTP 200 空回复
 - 移除 Anthropic 流式文本里对 DSML 标签的预先删除：它会在解析器看到工具调用之前把标签删掉，导致工具调用丢失、属性碎片（`name="...">`）泄漏为正文
 - 解析失败时输出的是清理过 DSML 标签的文本，而不是原始标签内容
 
