@@ -52,6 +52,9 @@ def messages():
         logger.info("[%s] model=%s stream=%s messages=%d",
                      request_id, model, stream, len(messages))
 
+        if req_data.get("thinking"):
+            logger.warning("[%s] thinking 参数不被上游 GenAI 支持，已忽略", request_id)
+
         # Get current token
         token = config.token_manager.get_token()
 

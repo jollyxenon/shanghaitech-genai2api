@@ -56,6 +56,9 @@ def chat_completions():
         logger.info("[%s] model=%s stream=%s tools=%s messages=%d",
                      request_id, model, stream, bool(has_tools), len(messages))
 
+        if req_data.get("reasoning_effort"):
+            logger.warning("[%s] reasoning_effort 不被上游 GenAI 支持，已忽略", request_id)
+
         if has_tools:
             messages = inject_tool_prompt(messages, tools, tool_choice)
 

@@ -98,6 +98,9 @@ def responses():
             len(messages),
         )
 
+        if body.get("reasoning"):
+            logger.warning("[%s] reasoning 不被上游 GenAI 支持，仅原样回显", request_id)
+
         generator_args = dict(
             instructions=body.get("instructions"),
             custom_tool_names=custom_tool_names,
