@@ -1,0 +1,151 @@
+{
+  "providers": {
+    "vision": {
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:31100/v1",
+      "apiKey": "$PI_GENAI_API_KEY",
+      "models": [
+        {
+          "id": "chatglm",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 64000,
+          "maxTokens": 6000,
+          "samplingParams": {},
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
+        }
+      ],
+      "compat": {
+        "supportsDeveloperRole": false,
+        "maxTokensField": "max_tokens",
+        "supportsReasoningEffort": true
+      }
+    },
+    "reasoning": {
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:31100/v1",
+      "apiKey": "$PI_GENAI_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-pro",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 64000,
+          "maxTokens": 6000,
+          "samplingParams": {},
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
+        }
+      ],
+      "compat": {
+        "supportsDeveloperRole": false,
+        "maxTokensField": "max_tokens",
+        "supportsReasoningEffort": true
+      }
+    },
+    "responses": {
+      "api": "openai-responses",
+      "baseUrl": "http://127.0.0.1:31100/v1",
+      "apiKey": "$PI_GENAI_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-pro",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 64000,
+          "maxTokens": 6000,
+          "samplingParams": {},
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
+        }
+      ]
+    },
+    "search": {
+      "api": "openai-responses",
+      "baseUrl": "http://127.0.0.1:31100/v1",
+      "apiKey": "$PI_GENAI_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-pro",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 64000,
+          "maxTokens": 6000,
+          "samplingParams": {
+            "web_search": true
+          },
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
+        }
+      ]
+    },
+    "anthropic": {
+      "api": "anthropic-messages",
+      "baseUrl": "http://127.0.0.1:31100",
+      "apiKey": "$PI_GENAI_API_KEY",
+      "models": [
+        {
+          "id": "chatglm",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 64000,
+          "maxTokens": 6000,
+          "samplingParams": {},
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          }
+        }
+      ]
+    }
+  }
+}

@@ -30,6 +30,9 @@ class ModelInfo:
     root_ai_type: str
     max_tokens: int | None
     description: str | None
+    supports_thinking: bool = False
+    supports_images: bool = False
+    is_chat: bool = True
 
 
 @dataclass
@@ -71,6 +74,9 @@ class ModelRegistry:
                 root_ai_type=rec.get("rootAiType", "xinference"),
                 max_tokens=rec.get("maxToken"),
                 description=rec.get("descInfo"),
+                supports_thinking=rec.get("enableDeepThink") == 1,
+                supports_images=str(rec.get("status")) == "3",
+                is_chat=str(rec.get("status")) in ("1", "3"),
             )
 
         self._models = models

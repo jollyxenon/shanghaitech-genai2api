@@ -9,7 +9,8 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 from config import model_registry
 from provider.genai import estimate_messages_tokens, estimate_text_tokens, iter_genai_stream
 from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
-from tools.prompts import inject_tool_prompt
+from tools.prompts import inject_tool_prompt, normalize_content, merge_content, flatten_message_content
+from provider.features import is_web_search_tool
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,9 @@ def anthropic_content_to_text(content: Any) -> str:
         elif part_type in ("thinking", "redacted_thinking"):
             # thinking 块是本地展示用的，不重新喂给上游模型
             continue
-        elif part_type == "image":
-            text_parts.append("[image]")
+        elif part_type in ("image", "document"):
+            # 附件由消息转换单独保留；不把 base64 或占位文本发给模型。
+            continue
         else:
             text_parts.append(json.dumps(part, ensure_ascii=False))
     return "\n".join(part for part in text_parts if part)
@@ -68,7 +70,7 @@ def anthropic_allowed_tool_names(body: Dict[str, Any]) -> set[str]:
     names = {
         tool["name"]
         for tool in tools
-        if isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"]
+        if isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"] and not is_web_search_tool(tool)
     }
     # tool_choice 指定单个工具时，只允许该工具，避免模型顺手调用其它工具。
     choice = body.get("tool_choice")
@@ -85,7 +87,7 @@ def anthropic_tools_to_openai_tools(tools: Any) -> List[Dict[str, Any]]:
         return converted
 
     for tool in tools:
-        if not isinstance(tool, dict) or not tool.get("name"):
+        if not isinstance(tool, dict) or not tool.get("name") or is_web_search_tool(tool):
             continue
         converted.append({
             "type": "function",
@@ -162,8 +164,8 @@ def split_anthropic_content(content: Any) -> Tuple[str, List[Dict[str, Any]], Li
         elif part_type in ("thinking", "redacted_thinking"):
             # 历史里的 thinking 块不参与 GenAI 转换
             continue
-        elif part_type == "image":
-            text_parts.append("[image]")
+        elif part_type in ("image", "document"):
+            continue
         else:
             text_parts.append(json.dumps(part, ensure_ascii=False))
 
@@ -171,28 +173,35 @@ def split_anthropic_content(content: Any) -> Tuple[str, List[Dict[str, Any]], Li
 
 
 def anthropic_message_to_genai_messages(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """保留消息及工具结果中的附件，将工具调用转换成平台可读文本。"""
     role = message.get("role", "user")
     if role not in ("user", "assistant", "system"):
         role = "user"
 
-    text, tool_uses, tool_results = split_anthropic_content(message.get("content", ""))
+    original = message.get("content", "")
+    text, tool_uses, tool_results = split_anthropic_content(original)
+    attachments = []
+    if isinstance(original, list):
+        for part in original:
+            if isinstance(part, dict) and part.get("type") in ("image", "document"):
+                attachments.append(part)
+    for result in tool_results:
+        nested = result.get("content")
+        if isinstance(nested, list):
+            attachments.extend(part for part in nested if isinstance(part, dict) and part.get("type") in ("image", "document"))
+
     if tool_results:
         visible_text = anthropic_tool_results_visible_text(tool_results)
-        if text:
-            visible_text = f"{visible_text}\n\n{text}" if visible_text else text
-        return [{"role": "user", "content": visible_text}]
-
-    if role == "assistant" and tool_uses:
-        content = text or ""
+        text = merge_content(visible_text, text)
+        role = "user"
+    elif role == "assistant" and tool_uses:
         for tool_use in tool_uses:
-            call_obj = {
-                "name": tool_use.get("name", ""),
-                "arguments": tool_use.get("input", {}),
-            }
-            content += f"\n<tool_call>\n{json.dumps(call_obj, ensure_ascii=False)}\n</tool_call>"
-        return [{"role": "assistant", "content": content.strip()}]
+            call_obj = {"name": tool_use.get("name", ""), "arguments": tool_use.get("input", {})}
+            text += f"\n<tool_call>\n{json.dumps(call_obj, ensure_ascii=False)}\n</tool_call>"
+        text = text.strip()
 
-    return [{"role": role, "content": text}]
+    content = merge_content(text, normalize_content(attachments)) if attachments else text
+    return [{"role": role, "content": content}]
 
 
 def anthropic_messages_to_genai_format(body: Dict[str, Any], token: str) -> Tuple[str, List[Dict[str, Any]], str]:
@@ -437,6 +446,7 @@ def stream_genai_as_anthropic(
     token: str,
     config: Any,
     allowed_tool_names: Optional[set[str]] = None,
+    upstream_options: Optional[Dict[str, Any]] = None,
 ) -> Generator[str, None, None]:
     """Stream GenAI response in Anthropic Messages API format."""
     started_at = time.monotonic()
@@ -451,7 +461,7 @@ def stream_genai_as_anthropic(
     history_messages = list(messages)
     for index in range(len(history_messages) - 1, -1, -1):
         if history_messages[index].get("role") == "user":
-            chat_info = anthropic_content_to_text(history_messages[index].get("content", ""))
+            chat_info = flatten_message_content(history_messages[index].get("content", ""))
             del history_messages[index]
             break
 
@@ -533,7 +543,7 @@ def stream_genai_as_anthropic(
             text_block_done = True
             yield write_sse("content_block_stop", {"type": "content_block_stop", "index": text_index})
 
-    for event in iter_genai_stream(chat_info, history_messages, model, max_tokens, config, token=token):
+    for event in iter_genai_stream(chat_info, history_messages, model, max_tokens, config, token=token, upstream_options=upstream_options):
         if event["type"] == "error":
             yield write_sse("error", {
                 "type": "error",

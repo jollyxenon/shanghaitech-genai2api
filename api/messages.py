@@ -6,6 +6,9 @@ import uuid
 from flask import Blueprint, current_app, request, jsonify, stream_with_context, Response
 
 from provider.genai import estimate_messages_tokens
+from provider.features import prepare_request
+from errors import UpstreamError
+from tools.prompts import flatten_message_content
 from provider.anthropic import (
     COMPAT_THINKING_SIGNATURE,
     anthropic_allowed_tool_names,
@@ -52,9 +55,6 @@ def messages():
         logger.info("[%s] model=%s stream=%s messages=%d",
                      request_id, model, stream, len(messages))
 
-        if req_data.get("thinking"):
-            logger.warning("[%s] thinking 参数不被上游 GenAI 支持，已忽略", request_id)
-
         # Get current token
         token = config.token_manager.get_token()
 
@@ -64,6 +64,7 @@ def messages():
 
         if not genai_messages:
             return anthropic_error("No valid messages provided", error_type="invalid_request_error", status=400)
+        genai_messages, upstream_options = prepare_request(genai_messages, model, config, req_data, "anthropic")
 
         if stream:
             gen = stream_genai_as_anthropic(
@@ -73,6 +74,7 @@ def messages():
                 token,
                 config,
                 allowed_tool_names=allowed_tool_names,
+                upstream_options=upstream_options,
             )
             return Response(
                 stream_with_context(gen),
@@ -98,6 +100,7 @@ def messages():
                 token,
                 config,
                 allowed_tool_names=allowed_tool_names,
+                upstream_options=upstream_options,
             ):
                 event = None
                 data = None
@@ -186,6 +189,10 @@ def messages():
             }
             return jsonify(response)
 
+    except ValueError as e:
+        return anthropic_error(str(e), error_type="invalid_request_error", status=400)
+    except UpstreamError as e:
+        return anthropic_error(str(e), error_type="api_error", status=502)
     except Exception as e:
         logger.exception("[%s] Unhandled error", request_id)
         return anthropic_error(
@@ -207,11 +214,10 @@ def count_tokens():
         messages = req_data.get('messages', [])
         system = req_data.get('system', '')
 
-        # Simple estimation: ~4 chars per token
-        text_length = len(str(system))
+        # 仅估算可读文本；图片和文档的实际上游用量无法在上传前得知。
+        text_length = len(flatten_message_content(system))
         for msg in messages:
-            content = msg.get('content', '')
-            text_length += len(str(content))
+            text_length += len(flatten_message_content(msg.get('content', '')))
 
         estimated_tokens = max(1, text_length // 4)
 

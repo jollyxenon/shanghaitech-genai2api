@@ -7,32 +7,9 @@ from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 from provider.anthropic import parse_tool_arguments
 from provider.genai import estimate_text_tokens, iter_genai_stream, split_history_messages
 from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
-from tools.prompts import flatten_message_content, inject_tool_prompt
+from tools.prompts import flatten_message_content, inject_tool_prompt, normalize_content, merge_content
 
 logger = logging.getLogger(__name__)
-
-
-def _content_to_text(content: Any) -> str:
-    """把 Responses 的 content（字符串或 part 数组）压平成文本。"""
-    if isinstance(content, str):
-        return content
-    if content is None:
-        return ""
-    if isinstance(content, list):
-        parts: List[str] = []
-        for part in content:
-            if isinstance(part, str):
-                parts.append(part)
-            elif isinstance(part, dict):
-                part_type = part.get("type")
-                if part_type in ("input_text", "output_text", "text", "summary_text"):
-                    parts.append(part.get("text", ""))
-                elif part_type in ("input_image", "image_url"):
-                    parts.append("[image]")
-                elif part_type == "input_audio":
-                    parts.append("[audio]")
-        return "\n".join(part for part in parts if part)
-    return str(content)
 
 
 def responses_tools_to_chat_tools(tools: Any) -> Tuple[List[Dict[str, Any]], Set[str]]:
@@ -133,7 +110,7 @@ def _merge_adjacent_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, A
         ):
             previous = merged[-1]["content"]
             current = message["content"]
-            merged[-1]["content"] = f"{previous}\n{current}".strip() if previous else current
+            merged[-1]["content"] = merge_content(previous, current)
         else:
             merged.append(dict(message))
     return merged
@@ -163,7 +140,7 @@ def responses_input_to_genai_messages(input_value: Any, instructions: Any = None
                 role = "system"
             if role not in ("user", "assistant", "system"):
                 role = "user"
-            messages.append({"role": role, "content": _content_to_text(item.get("content"))})
+            messages.append({"role": role, "content": normalize_content(item.get("content"))})
         elif item_type == "function_call":
             call_obj = {
                 "name": item.get("name", ""),
@@ -183,16 +160,19 @@ def responses_input_to_genai_messages(input_value: Any, instructions: Any = None
                 "content": f"<tool_call>\n{json.dumps(call_obj, ensure_ascii=False)}\n</tool_call>",
             })
         elif item_type in ("function_call_output", "custom_tool_call_output"):
-            output = _content_to_text(item.get("output"))
+            output_parts = normalize_content(item.get("output"))
+            output = flatten_message_content(output_parts)
+            attachments = [part for part in output_parts if part["type"] != "text"] if isinstance(output_parts, list) else []
             call_id = item.get("call_id", "")
+            text = (
+                "<tool_result>\n"
+                f"  <tool_call_id>{call_id}</tool_call_id>\n"
+                f"  <result>\n{output}\n  </result>\n"
+                "</tool_result>"
+            )
             messages.append({
                 "role": "user",
-                "content": (
-                    "<tool_result>\n"
-                    f"  <tool_call_id>{call_id}</tool_call_id>\n"
-                    f"  <result>\n{output}\n  </result>\n"
-                    "</tool_result>"
-                ),
+                "content": merge_content(text, attachments) if attachments else text,
             })
         elif item_type in ("reasoning", "item_reference"):
             # 历史思维链与引用不重新喂给上游模型
@@ -200,7 +180,7 @@ def responses_input_to_genai_messages(input_value: Any, instructions: Any = None
         else:
             logger.debug("Ignoring unsupported Responses input item type: %s", item_type)
 
-    text = _content_to_text(instructions)
+    text = flatten_message_content(instructions)
     if text.strip():
         messages.insert(0, {"role": "system", "content": text})
 
@@ -281,6 +261,7 @@ def stream_genai_as_responses(
     allowed_tool_names: Optional[Set[str]] = None,
     max_output_tokens: Optional[int] = None,
     response_meta: Optional[Dict[str, Any]] = None,
+    upstream_options: Optional[Dict[str, Any]] = None,
 ) -> Generator[str, None, None]:
     """把 GenAI 流转换成 OpenAI Responses API 的 SSE 事件。"""
     custom_tool_names = custom_tool_names or set()
@@ -516,7 +497,7 @@ def stream_genai_as_responses(
                 yield ev("response.output_item.done", {"output_index": index, "item": item})
                 output_items.append(item)
 
-    for event in iter_genai_stream(chat_info, history_messages, model, max_tokens, config):
+    for event in iter_genai_stream(chat_info, history_messages, model, max_tokens, config, upstream_options=upstream_options):
         if event["type"] == "error":
             yield ev("error", {"code": None, "message": event["message"], "param": None})
             return
@@ -618,7 +599,7 @@ def stream_genai_as_responses(
         reasoning_text = "".join(reasoning_parts)
         output_tokens = estimate_text_tokens(output_text) + estimate_text_tokens(reasoning_text)
         input_tokens = estimate_text_tokens(chat_info) + sum(
-            estimate_text_tokens(str(message.get("content", ""))) for message in history_messages
+            estimate_text_tokens(flatten_message_content(message.get("content", ""))) for message in history_messages
         )
 
         truncated = event.get("finish_reason") == "length"

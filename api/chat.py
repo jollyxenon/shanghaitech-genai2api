@@ -6,6 +6,7 @@ from datetime import datetime
 from flask import Blueprint, current_app, request, jsonify, stream_with_context, Response
 
 from errors import UpstreamError, openai_error
+from provider.features import prepare_request
 from tools.prompts import inject_tool_prompt
 from tools.parsing import extract_tool_calls
 from provider.genai import (
@@ -38,7 +39,7 @@ def chat_completions():
         model = req_data.get('model', 'gpt-3.5-turbo')
         stream = req_data.get('stream', False)
         max_tokens = req_data.get('max_tokens', 30000)
-        tools = req_data.get('tools', None)
+        tools = [tool for tool in req_data.get('tools') or [] if tool.get('type') == 'function']
         tool_choice = req_data.get('tool_choice', None)
 
         has_tools = tools and len(tools) > 0
@@ -56,12 +57,10 @@ def chat_completions():
         logger.info("[%s] model=%s stream=%s tools=%s messages=%d",
                      request_id, model, stream, bool(has_tools), len(messages))
 
-        if req_data.get("reasoning_effort"):
-            logger.warning("[%s] reasoning_effort 不被上游 GenAI 支持，已忽略", request_id)
-
         if has_tools:
             messages = inject_tool_prompt(messages, tools, tool_choice)
 
+        messages, upstream_options = prepare_request(messages, model, config, req_data, "chat")
         chat_info = convert_messages_to_genai_format(messages)
 
         if not chat_info:
@@ -70,11 +69,13 @@ def chat_completions():
         if stream:
             if has_tools:
                 gen = stream_genai_response_with_tools(
-                    chat_info, messages, model, max_tokens, config, allowed_tool_names
+                    chat_info, messages, model, max_tokens, config, allowed_tool_names,
+                    upstream_options=upstream_options,
                 )
             else:
                 gen = stream_genai_response(
-                    chat_info, messages, model, max_tokens, config
+                    chat_info, messages, model, max_tokens, config,
+                    upstream_options=upstream_options,
                 )
             return Response(
                 stream_with_context(gen),
@@ -89,7 +90,8 @@ def chat_completions():
         else:
             try:
                 complete_content, complete_reasoning, finish_reason = collect_genai_response(
-                    chat_info, messages, model, max_tokens, config
+                    chat_info, messages, model, max_tokens, config,
+                    upstream_options=upstream_options,
                 )
             except UpstreamError as e:
                 logger.warning("[%s] upstream error: %s", request_id, e)
@@ -142,6 +144,10 @@ def chat_completions():
             }
             return jsonify(response)
 
+    except ValueError as e:
+        return openai_error(str(e), error_type="invalid_request_error", status=400)
+    except UpstreamError as e:
+        return openai_error(str(e), error_type="upstream_error", status=502)
     except Exception as e:
         logger.exception("[%s] Unhandled error", request_id)
         return openai_error(

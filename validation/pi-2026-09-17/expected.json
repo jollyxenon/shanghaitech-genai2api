@@ -1,0 +1,14 @@
+{
+  "image": {
+    "digits": "817493",
+    "left": "青绿色三角形",
+    "right": "暗红色矩形"
+  },
+  "document": {
+    "invoice": "PI-704193",
+    "quantity": 7,
+    "unit_price": 38,
+    "delivery": 19,
+    "total": 285
+  }
+}

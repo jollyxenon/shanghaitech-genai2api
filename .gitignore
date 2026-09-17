@@ -216,3 +216,6 @@ images/
 
 # Claude Code
 .claude/
+
+# 本地调查产物（浏览器快照、下载的前端文件）
+.playwright-mcp/

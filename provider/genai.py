@@ -9,6 +9,7 @@ import requests
 
 from config import GENAI_URL, build_genai_headers, model_registry
 from errors import UpstreamError, make_error_chunk
+from provider.features import search_sources
 from tools.parsing import extract_tool_calls, find_tool_call_open, tool_call_prefix_len
 from tools.prompts import flatten_message_content, normalize_message_content
 
@@ -87,7 +88,7 @@ def split_history_messages(messages):
     return normalized
 
 
-def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, token=None):
+def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, token=None, upstream_options=None):
     """统一的上游 GenAI 流迭代器，供 Chat / Anthropic / Responses 三个适配层共用。
 
     依次产出：
@@ -109,12 +110,14 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
         "promptTokens": 0,
         "rootAiType": root_ai_type,
         "maxToken": max_tokens or 30000,
+        **(upstream_options or {}),
     }
 
     logger.debug("=== GenAI Request ===")
     logger.debug("Model: %s, rootAiType: %s", model, root_ai_type)
     logger.debug("Messages count: %d", len(history_messages))
 
+    response = None
     try:
         response = requests.post(
             GENAI_URL,
@@ -129,6 +132,8 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
             if new_token:
                 logger.info("Token refreshed after 401, retrying request")
                 headers = build_genai_headers(new_token)
+                token = new_token
+                response.close()
                 response = requests.post(
                     GENAI_URL, headers=headers, json=genai_data, stream=True,
                     timeout=UPSTREAM_TIMEOUT,
@@ -213,14 +218,35 @@ def iter_genai_stream(chat_info, history_messages, model, max_tokens, config, to
                 finish_reason = choices[0].get("finish_reason")
                 break
 
+        if genai_data.get("netGo") and not truncated:
+            try:
+                sources = search_sources(genai_data, token)
+                # 附加来源也受本地输出预算约束，只保留完整的链接行。
+                if max_tokens and sources:
+                    kept = []
+                    for source_line in sources.splitlines(keepends=True):
+                        count = estimate_text_tokens(source_line)
+                        if emitted_tokens + count > max_tokens:
+                            truncated = True
+                            break
+                        emitted_tokens += count
+                        kept.append(source_line)
+                    sources = "".join(kept)
+                if sources:
+                    yield {"type": "delta", "content": sources, "reasoning": None}
+            except (requests.RequestException, UpstreamError, ValueError):
+                logger.warning("补充检索列表获取失败；保留已返回的正文引用", exc_info=True)
         yield {"type": "done", "finish_reason": "length" if truncated else finish_reason}
 
     except Exception as e:
         logger.exception("Error in iter_genai_stream")
         yield {"type": "error", "message": str(e)}
+    finally:
+        if response is not None:
+            response.close()
 
 
-def collect_genai_response(chat_info, messages, model, max_tokens, config):
+def collect_genai_response(chat_info, messages, model, max_tokens, config, upstream_options=None):
     """非流式收集上游输出，返回 (content, reasoning, finish_reason)。
 
     上游错误直接抛 UpstreamError，不能像以前那样解析 SSE 失败就丢掉。
@@ -229,7 +255,7 @@ def collect_genai_response(chat_info, messages, model, max_tokens, config):
     reasoning_parts = []
     finish_reason = None
     history = split_history_messages(messages)
-    for event in iter_genai_stream(chat_info, history, model, max_tokens, config):
+    for event in iter_genai_stream(chat_info, history, model, max_tokens, config, upstream_options=upstream_options):
         if event["type"] == "error":
             raise UpstreamError(event["message"])
         if event["type"] == "delta":
@@ -247,7 +273,7 @@ def _chat_finish_reason(upstream_reason):
     return "length" if upstream_reason == "length" else "stop"
 
 
-def stream_genai_response(chat_info, messages, model, max_tokens, config):
+def stream_genai_response(chat_info, messages, model, max_tokens, config, upstream_options=None):
     """OpenAI Chat Completions 兼容的流式响应。"""
     started_at = time.monotonic()
     first_token_at = None
@@ -279,7 +305,7 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
 
     history = split_history_messages(messages)
 
-    for event in iter_genai_stream(chat_info, history, model, max_tokens, config):
+    for event in iter_genai_stream(chat_info, history, model, max_tokens, config, upstream_options=upstream_options):
         if event["type"] == "error":
             yield make_error_chunk(event["message"])
             return
@@ -313,7 +339,7 @@ def stream_genai_response(chat_info, messages, model, max_tokens, config):
 
 
 def stream_genai_response_with_tools(
-    chat_info, messages, model, max_tokens, config, allowed_tool_names=None
+    chat_info, messages, model, max_tokens, config, allowed_tool_names=None, upstream_options=None
 ):
     """带工具调用的 Chat Completions 流式响应。
 
@@ -354,7 +380,7 @@ def stream_genai_response_with_tools(
 
     history = split_history_messages(messages)
 
-    for event in iter_genai_stream(chat_info, history, model, max_tokens, config):
+    for event in iter_genai_stream(chat_info, history, model, max_tokens, config, upstream_options=upstream_options):
         if event["type"] == "error":
             yield make_error_chunk(event["message"])
             return

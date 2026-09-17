@@ -16,6 +16,12 @@ def list_models():
             "id": model_id,
             "object": "model",
             "owned_by": info.root_ai_type,
-            "permission": []
+            "permission": [],
+            "capabilities": {
+                "image_input": info.supports_images,
+                "document_input": info.is_chat,
+                "web_search": info.is_chat,
+                "thinking_toggle": info.supports_thinking,
+            },
         })
     return jsonify({"object": "list", "data": models})

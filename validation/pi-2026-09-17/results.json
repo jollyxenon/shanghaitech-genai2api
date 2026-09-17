@@ -1,0 +1,240 @@
+[
+  {
+    "case": "image-anthropic",
+    "provider": "anthropic",
+    "model": "chatglm",
+    "thinking": "high",
+    "exit": 0,
+    "seconds": 300.91,
+    "tools": [],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "error",
+        "text": ""
+      }
+    ],
+    "errors": [
+      "{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"HTTPSConnectionPool(host='genai.shanghaitech.edu.cn', port=443): Read timed out. (read timeout=300)\"}}"
+    ],
+    "stderr": ""
+  },
+  {
+    "case": "image",
+    "provider": "vision",
+    "model": "chatglm",
+    "thinking": "off",
+    "exit": 0,
+    "seconds": 258.94,
+    "tools": [],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": "The user wants me to observe the image directly. The image shows:\n- Six digits: 817493\n- Left shape: a triangle (teal/cyan green color)\n- Right shape: a rectangle (dark red/crimson color)观察结果：\n\n- **六位数字**：817493\n- **左侧图形**：三角形，颜色为青绿色（teal，蓝绿色）\n- **右侧图形**：矩形（长方形），颜色为深红色（暗红色/酒红色）"
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "pdf-bash-anthropic",
+    "provider": "anthropic",
+    "model": "chatglm",
+    "thinking": "high",
+    "exit": 0,
+    "seconds": 8.14,
+    "tools": [],
+    "thinking_events": 5,
+    "thinking_chars": 54,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": ""
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "pdf-native",
+    "provider": "responses",
+    "model": "deepseek-pro",
+    "thinking": "off",
+    "exit": 0,
+    "seconds": 1.57,
+    "tools": [],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": "I can't read the invoice. The attached file `invoice.pdf` is a PDF whose text content is compressed with FlateDecode, and I have no PDF/text-extraction tool available in this environment to decompress or parse it.\n\nI also verified that only the raw PDF bytes are available to me — the human-readable text is inside the compressed stream (`/Filter /FlateDecode`), so I cannot see the invoice number, quantity, unit price, or shipping cost.\n\nTo proceed, I'd need one of:\n- The PDF text extracted (e.g., copy-paste the invoice contents), or\n- A tool/command available to decode the PDF stream.\n\nI won't guess any values."
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "pdf-rpc-shell",
+    "commands": [
+      {
+        "name": "llama",
+        "description": "Manage llama.cpp router models",
+        "source": "extension",
+        "sourceInfo": {
+          "path": "<inline:llama.cpp>",
+          "source": "inline",
+          "scope": "temporary",
+          "origin": "top-level"
+        }
+      }
+    ],
+    "bash": {
+      "id": "document",
+      "type": "response",
+      "command": "bash",
+      "success": true,
+      "data": {
+        "output": "{\"status\": \"completed\", \"answer\": \"根据发票信息提取如下：\\n\\n- **发票编号**：PI-704193\\n- **数量**：7\\n- **单价**：38 CNY\\n- **运费**：19 CNY\\n\\n**计算总金额**：\\n\\n货物金额 = 7 × 38 = 266 CNY  \\n总金额 = 266 + 19 = **285 CNY**\\n\\n因此，发票总金额为 **285 CNY**。\"}\n",
+        "exitCode": 0,
+        "cancelled": false,
+        "truncated": false
+      }
+    },
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": "根据刚才命令的实际输出：\n\n- **发票编号**：PI-704193\n- **数量**：7\n- **单价**：38 CNY\n- **运费**：19 CNY\n\n**算式：**\n- 货物金额 = 7 × 38 = 266 CNY\n- 总金额 = 266 + 19 = **285 CNY**\n\n因此，发票总金额为 **285 CNY**。命令执行成功（状态为 `completed`）。"
+      }
+    ],
+    "errors": [],
+    "seconds": 1.55,
+    "settled": true
+  },
+  {
+    "case": "pdf-via-bash-retry",
+    "provider": "responses",
+    "model": "deepseek-pro",
+    "thinking": "off",
+    "exit": 0,
+    "seconds": 50.98,
+    "tools": [],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": ""
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "pdf-via-bash",
+    "provider": "responses",
+    "model": "deepseek-pro",
+    "thinking": "off",
+    "exit": 0,
+    "seconds": 1.12,
+    "tools": [],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": "I'll start by inspecting the working directory and the provided script.\n\n"
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "search",
+    "provider": "search",
+    "model": "deepseek-pro",
+    "thinking": "off",
+    "exit": 0,
+    "seconds": 36.99,
+    "tools": [],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": "1) 核心回答：上海科技大学图书馆的官网入口为 https://library.shanghaitech.edu.cn/（主站及各栏目页均在此域名下）；图书馆简介页为 https://library.shanghaitech.edu.cn/3940/list.htm，其中说明图书馆是上科大教学、科研的信息与知识服务支撑平台，践行\"服务国家发展战略\"\"培养创新创业人才\"\"以学生教师为本\"的办学理念，针对教学、科研和学生成长多层次需求提供服务。图书检索的使用说明见 https://library.shanghaitech.edu.cn/2016/0411/c4047a30913/page.htm，说明可通过上海科技大学文献资源集成发现系统查找图书，在\"全部类型\"字段选择\"图书\"检索；若仅需电子图书，可在检索框下拉列表中选择\"电子资源\"，若需检索纸质版图书，可在检索框下拉列表中选择相应馆藏类型；此外 https://library.shanghaitech.edu.cn/4030/list.htm 提供参考咨询渠道，https://aiplat.shanghaitech.edu.cn/16324/list.htm 提供文献智能搜索与图书文献查询助手的使用说明。关于开放时间，材料中虽出现 https://library.shanghaitech.edu.cn/3941/list.htm 一条，但按要求不在此转述，请以图书馆官网该页面的最新公告为准。\n\n2) 最新相关新闻：\n- 图书馆简介（含服务定位与理念）/ 上海科技大学图书馆 / 时间：2026-09-01T22:42:59Z / 该页介绍图书馆作为上科大教学、科研的信息与知识服务支撑平台，践行\"服务国家发展战略\"\"培养创新创业人才\"\"以学生教师为本\"的办学理念，面向教学、科研和学生成长的多层次需求提供信息与知识服务。这是判断图书馆定位与职能的官方入口页。[来源编号：1](https://library.shanghaitech.edu.cn/3940/list.htm)\n- 如何查找图书？/ 上海科技大学图书馆 / 时间：2026-01-13T16:00:33Z / 该说明介绍了通过上海科技大学文献资源集成发现系统查找图书的方法：在\"全部类型\"字段选择\"图书\"检索，仅需电子图书时可在检索框下拉列表中选择\"电子资源\"，需要纸质版图书时可在下拉列表中选择对应馆藏类型。是图书检索的核心操作指引。[来源编号：2](https://library.shanghaitech.edu.cn/2016/0411/c4047a30913/page.htm)\n- 参考咨询 / 上海科技大学图书馆 / 时间：2026-01-13T16:01:02Z / 该页说明参考咨询服务面向科研用户，读者在查询和获取科技文献过程中遇到疑问时，可亲临图书馆由馆员解答，也可通过电话或网络方式咨询。为检索过程中遇到问题提供了求助渠道。[来源编号：20](https://library.shanghaitech.edu.cn/4030/list.htm)\n- 文献智能搜索 / 上海科技大学（AI平台）/ 时间：2026-01-13T16:44:21Z / 该页介绍在上海科技大学图书文献查询助手中输入所需文献的领域方向（如\"请给我一些最新的Car-T细胞治疗的文章\"），助手可从 ArXiv、PubMed、Chemrxiv、Doaj 等数据库查询相关文献。属于图书文献检索的智能化使用说明。[来源编号：10](https://aiplat.shanghaitech.edu.cn/16324/list.htm)\n- 图书捐赠 / 上海科技大学图书馆 / 时间：2025-11-13T16:00:16Z / 该页说明图书馆欢迎本校师生、校友及社会各界人士捐赠图书、期刊等文献资源，并列出捐赠者需知晓的有关要求（考虑学校性质、学科范围、文献资源建设规划与馆藏有效管理利用条件）。与图书资源建设相关，可作为图书馆服务的补充了解。[来源编号：19](https://library.shanghaitech.edu.cn/tsjz_14433/list.htm)\n- 上海科技大学图书馆空间预约管理系统采购询价公告 / 上海科技大学图书信息中心 / 时间：2026-05-14 / 公告显示项目单位为图书信息中心，项目概况为提高图书馆空间预约管理能力而采购相关系统。可反映图书馆当前在空间服务与信息化建设方面的进展。[来源编号：8](https://www.shanghaitech.edu.cn/2026/0514/c1428a1121945/page.htm)\n- 上海科技大学校园网出口访问优化服务询价公告 / 上海科技大学图书信息中心 / 时间：2026-05-21 / 公告项目单位为图书信息中心，项目概况为提升师生网络使用体验而进行校园网出口访问优化。与图书馆同属图书信息中心职责范围，可作为相关服务动态参考。[来源编号：4](https://www.shanghaitech.edu.cn/2026/0521/c1428a1122815/page.htm)\n\n综合总结：围绕\"使用上科大图书馆\"这一需求，可以从三条主线入手：入口、定位与检索。官网入口为 library.shanghaitech.edu.cn，简介页明确了图书馆作为学校教学科研信息与知识服务支撑平台的定位；使用说明方面，纸质与电子图书均可通过文献资源集成发现系统查找（\"全部类型\"选\"图书\"，再按需选择\"电子资源\"等类型），遇到问题可走参考咨询渠道，也可尝试 AI 平台的图书文献查询助手从 ArXiv、PubMed、Chemrxiv、Doaj 等库检索文献。此外，图书捐赠页面与图书信息中心最新的空间预约系统、校园网出口优化采购公告，反映了图书馆在馆藏建设与空间、网络服务上的持续投入。开放时间与节假日安排请直接以图书馆官网\"开放时间\"栏目及\"图书馆通知\"的最新公告为准，入馆前建议先行核对。\n\n补充检索结果（独立于正文引用编号）：\n- [i学堂新生专场:一站解锁图书馆学术资源(人文社科篇) | 厦门大学讲座报名系统](<https://lecture.xmu.edu.cn/node/1598>)\n- [问卷邀约|图书馆数字资源使用调研,期待每一位师生的声音](<https://lib.sdju.edu.cn/2026/0914/c8827a154643/page.htm>)\n- [上海科技大学控制和电源插件采购询价结果公告](<https://www.shanghaitech.edu.cn/2026/0914/c1428a1127097/page.htm>)\n- [上海科技大学拟聘人员(校聘劳动合同制)公示](<https://hr.shanghaitech.edu.cn/2026/0911/c2995a1126925/page.htm>)\n- [上海科技大学附属学校 晒课表 (2026学年第一学期 初中学段)](<https://fsxx.shanghaitech.edu.cn/2026/0904/c5173a1126788/page.htm>)\n- [简介](<https://library.shanghaitech.edu.cn/3940/list.htm>)\n- [上海科技大学温度监视器采购询价结果公告](<https://www.shanghaitech.edu.cn/2026/0902/c1428a1126756/page.htm>)\n- [上海科技](<https://kjgl.stcsm.sh.gov.cn/dataSwitching/governmentAffairsFromDept.do?itemCode=0149&access_token=null>)\n- [开卷南科丨AI时代如何高效学习?这份抢跑清单请收好_检索_时间_EndNote](<https://www.sohu.com/a/1076027318_121106875?scm=10001.8085_13-8085_13.0.0-0-0-0-0.0>)\n- [国家科学数字图书馆_www.csdl.ac.cn](<https://www.xinxifabu.net/enet/wang8858797.html>)"
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "text-document",
+    "provider": "responses",
+    "model": "deepseek-pro",
+    "thinking": "off",
+    "exit": 0,
+    "seconds": 1.62,
+    "tools": [
+      {
+        "tool": "read",
+        "isError": false
+      }
+    ],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "toolUse",
+        "text": "I'll read the file first.\n\n"
+      },
+      {
+        "stopReason": "stop",
+        "text": "**设备归还提醒**\n\n- **设备编号**：EQ-680529\n- **项目**：青杉计划\n- **归还时间**：周三 16:30\n- **负责人**：周宁\n\n请负责人周宁留意，务必在**周三 16:30** 前完成设备 **EQ-680529**（青杉计划）的归还，避免影响后续使用。"
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "thinking-off",
+    "provider": "reasoning",
+    "model": "deepseek-pro",
+    "thinking": "off",
+    "exit": 0,
+    "seconds": 2.22,
+    "tools": [],
+    "thinking_events": 0,
+    "thinking_chars": 0,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": "我来解这个题。\n\n设蓝箱为 $x$ 箱：\n- 红箱：$x+5$\n- 绿箱：$x-3$\n\n总数 41：\n\n$$(x+5) + x + (x-3) = 41$$\n$$3x + 2 = 41$$\n$$3x = 39 \\Rightarrow x = 13$$\n\n所以：\n- 蓝箱：13 箱\n- 红箱：$13+5 = 18$ 箱\n- 绿箱：$13-3 = 10$ 箱\n\n总件数：\n\n$$18 \\times 6 + 13 \\times 4 + 10 \\times 9$$\n$$= 108 + 52 + 90 = 250$$\n\n## 计算结果\n\n| 颜色 | 箱数 | 每箱件数 | 小计 |\n|------|------|----------|------|\n| 红 | 18 | 6 | 108 |\n| 蓝 | 13 | 4 | 52 |\n| 绿 | 10 | 9 | 90 |\n| **合计** | **41** | — | **250** |\n\n**答案：红箱 18 箱，蓝箱 13 箱，绿箱 10 箱，总共 250 件。**\n\n## 核对\n\n- 箱数合计：$18+13+10 = 41$ ✓\n- 红比蓝多：$18-13 = 5$ ✓\n- 绿比蓝少：$13-10 = 3$ ✓\n- 件数合计：$108+52+90 = 250$ ✓\n\n记录编号：**R-294806**"
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  },
+  {
+    "case": "thinking-on",
+    "provider": "reasoning",
+    "model": "deepseek-pro",
+    "thinking": "high",
+    "exit": 0,
+    "seconds": 2.17,
+    "tools": [],
+    "thinking_events": 28,
+    "thinking_chars": 211,
+    "assistant": [
+      {
+        "stopReason": "stop",
+        "text": "**计算过程**\n\n设蓝箱为 b 箱：\n- 红箱 = b + 5\n- 绿箱 = b − 3\n\n由总数 41：\n(b + 5) + b + (b − 3) = 41 → 3b + 2 = 41 → b = 13\n\n**结果**\n\n| 颜色 | 箱数 | 每箱件数 | 件数 |\n|------|------|----------|------|\n| 红 | 18 | 6 | 108 |\n| 蓝 | 13 | 4 | 52 |\n| 绿 | 10 | 9 | 90 |\n| 合计 | 41 | — | **250** |\n\n**核对**\n- 18 + 13 + 10 = 41 ✓\n- 红比蓝多：18 − 13 = 5 ✓\n- 绿比蓝少：13 − 10 = 3 ✓\n- 总件数：108 + 52 + 90 = 250 ✓\n\n记录 R-638219 已完成。"
+      }
+    ],
+    "errors": [],
+    "stderr": ""
+  }
+]

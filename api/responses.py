@@ -12,6 +12,8 @@ from provider.responses import (
     stream_genai_as_responses,
 )
 from tools.prompts import inject_tool_prompt
+from provider.features import prepare_request
+from errors import UpstreamError
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +100,10 @@ def responses():
             len(messages),
         )
 
-        if body.get("reasoning"):
-            logger.warning("[%s] reasoning 不被上游 GenAI 支持，仅原样回显", request_id)
+        messages, upstream_options = prepare_request(messages, model, config, body, "responses")
 
         generator_args = dict(
+            upstream_options=upstream_options,
             instructions=body.get("instructions"),
             custom_tool_names=custom_tool_names,
             allowed_tool_names=allowed_tool_names,
@@ -157,6 +159,10 @@ def responses():
             return responses_error("Upstream returned no response", error_type="api_error", status=502)
         return jsonify(response_object)
 
+    except ValueError as e:
+        return responses_error(str(e), status=400)
+    except UpstreamError as e:
+        return responses_error(str(e), error_type="api_error", status=502)
     except Exception as e:
         logger.exception("[%s] Unhandled error", request_id)
         return responses_error(str(e), error_type="api_error", status=500)

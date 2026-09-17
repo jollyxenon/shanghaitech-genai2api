@@ -1,0 +1,26 @@
+{
+  "pi": "/home/xenon/.local/share/fnm/node-versions/v24.16.0/installation/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
+  "flags": [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--no-approve",
+    "--offline",
+    "--mode",
+    "json",
+    "--no-session"
+  ],
+  "agentDir": "/tmp/pi-genai-validation/agent",
+  "cwd": "/tmp/pi-genai-validation/work",
+  "tools": "按场景仅使用原生 read/bash 或禁用所有工具",
+  "relay": "只观察转发，不修改请求",
+  "providers": [
+    "vision",
+    "reasoning",
+    "responses",
+    "search",
+    "anthropic"
+  ]
+}

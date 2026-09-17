@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+### 验证记录
+
+- 新增 Pi 0.85.1 屏蔽用户插件后的真实场景报告、样本和脱敏请求记录：思考与搜索通过，图片存在长延迟/超时，PDF 需显式调用上传命令；记录工具未执行和令牌过期时流中断的问题，不将这些场景判为通过
+
 ### New Features
+
+- 三种 API 接入网页的图片、文档、联网搜索和深度思考开关；支持 URL/base64 图片与内联/URL 文档，当前轮文档通过同会话 `fileIds` 关联
+- 图片服务令牌自动获取：图片服务（独立域名）不认用户登录令牌，代理首次上传图片时从网页首页定位 `app.<hash>.js` 并提取前端使用的公开令牌，缓存在进程内，无需手工配置
+- 联网搜索返回正文链接，并追加独立标注的补充检索列表，避免混淆两次检索的引用编号
+- `/v1/models` 增加 `capabilities`；附件日志记录数量、字节数、解析长度与准备耗时
 
 - 新增 `tools/bench_speed.py`：经本地代理逐个测量模型的流式首字时间（TTFT）、正文首字时间与输出速度（tokens/s），提供 `pixi run bench-speed` 任务
 - **DSML 工具标记兼容**：部分模型会绕过注入的 `<tool_call>`，直接输出 GenAI 原生的 DSML 标记。代理现在统一处理这些变体：
@@ -23,9 +32,12 @@
 - `max_tokens` 由代理按估算 token 本地强制生效，命中上限时 Chat `finish_reason` 返回 `length`、Anthropic `stop_reason` 返回 `max_tokens`
 - `usage.prompt_tokens` / Anthropic `input_tokens` 改为按请求消息估算，不再是写死的 0
 - `tool_choice` 指定单个函数时收窄允许工具集合，输出层同时过滤其它工具调用
-- `reasoning_effort` / `thinking.budget_tokens` / `reasoning.effort` 被上游忽略时记录 warning，并在 README 声明
+- `reasoning_effort` / Anthropic `thinking` / Responses `reasoning.effort` 现在映射为上游 `thinking` 布尔开关；不支持精确推理档位及预算，相关映射会记录日志
 
 ### Bug Fixes
+
+- 图片和文档不再在工具提示词注入及协议转换时变成 `[image]` 或 base64 文本；工具结果里的附件也保留
+- 上游流在结束、出错或客户端断开时关闭 HTTP 响应；附件无效返回 400，上传服务失败返回 502
 
 - 修复上游在 SSE 通道里直接返回纯文本错误（如 worker 不可用时的 `No available workers (all circuits open or unhealthy)`）被当作 `JSONDecodeError` 跳过，导致三种接口都把“上游不可用”伪装成 HTTP 200 空回复；现在会转为标准 error 事件 / 502
 - 解析器显式识别 `[DONE]` 结束标记与 SSE 注释/字段行，不再依赖 JSON 解析失败来跳过它们

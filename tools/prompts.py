@@ -1,3 +1,4 @@
+import base64
 import json
 
 
@@ -43,34 +44,99 @@ COMMON_TOOL_EXAMPLES = {
 }
 
 
-def flatten_message_content(content):
+def normalize_content(content):
+    """将三种 API 的文本、图片和文档转换成统一内容块，不丢失附件。"""
     if content is None:
         return ""
-
     if isinstance(content, str):
         return content
+    if not isinstance(content, list):
+        raise ValueError("message content 必须是字符串或内容块数组")
+    parts = []
+    for part in content:
+        if isinstance(part, str):
+            parts.append({"type": "text", "text": part})
+            continue
+        if not isinstance(part, dict):
+            raise ValueError("content 中的每一项必须是内容块")
+        kind = part.get("type")
+        if kind in ("text", "input_text", "output_text", "summary_text"):
+            if not isinstance(part.get("text", ""), str):
+                raise ValueError("text 内容必须是字符串")
+            parts.append({"type": "text", "text": part.get("text", "")})
+        elif kind in ("thinking", "redacted_thinking"):
+            continue
+        elif kind in ("image_url", "input_image", "image"):
+            source = part.get("source") or {}
+            if not isinstance(source, dict):
+                raise ValueError("图片 source 必须是对象")
+            image = part.get("image_url") or source.get("url")
+            if isinstance(image, str):
+                image = {"url": image}
+            if source.get("type") == "base64":
+                image = {"url": f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}"}
+            if not isinstance(image, dict) or not isinstance(image.get("url"), str) or not image["url"]:
+                raise ValueError("图片需要 image_url、URL source 或 base64 source；不支持 file_id")
+            parts.append({"type": "image_url", "image_url": dict(image)})
+        elif kind in ("file", "input_file", "document"):
+            source = part.get("source") or {}
+            if not isinstance(source, dict) or not isinstance(part.get("file", {}), dict):
+                raise ValueError("文档 source/file 必须是对象")
+            file = dict(part.get("file") or part)
+            if kind == "document":
+                file = {"filename": part.get("title") or "document"}
+                if source.get("type") == "base64":
+                    file["file_data"] = f"data:{source.get('media_type', 'application/pdf')};base64,{source.get('data', '')}"
+                elif source.get("type") == "url":
+                    file["file_url"] = source.get("url")
+                elif source.get("type") == "text":
+                    encoded = base64.b64encode(source.get("data", "").encode()).decode()
+                    file["file_data"] = "data:text/plain;base64," + encoded
+                else:
+                    raise ValueError("文档 source 需要 base64、url 或 text")
+            if not file.get("file_data") and not file.get("file_url"):
+                raise ValueError("文件需要 file_data 或 file_url；代理不提供 Files API/file_id 存储")
+            parts.append({"type": "file", "file": file})
+        else:
+            raise ValueError(f"不支持的消息内容类型: {kind}")
+    if all(part["type"] == "text" for part in parts):
+        return "\n".join(part["text"] for part in parts if part["text"])
+    return parts
 
+
+def merge_content(first, second):
+    """合并同一轮的内容并保留图片和文档。"""
+    if isinstance(first, str) and isinstance(second, str):
+        return "\n".join(text for text in (first, second) if text)
+    left = [{"type": "text", "text": first}] if isinstance(first, str) else first
+    right = [{"type": "text", "text": second}] if isinstance(second, str) else second
+    return (left or []) + (right or [])
+
+
+def flatten_message_content(content):
+    """仅提取可读文本，用于当前问题和用量估算，不把附件编码当提示词。"""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
     if isinstance(content, list):
-        parts = [flatten_message_content(item) for item in content]
-        return "\n".join(part for part in parts if part)
-
+        return "\n".join(filter(None, (flatten_message_content(item) for item in content)))
     if isinstance(content, dict):
-        text = content.get("text")
-        if isinstance(text, str):
-            return text
+        if content.get("type") in ("image_url", "input_image", "image", "file", "input_file", "document"):
+            return ""
+        if isinstance(content.get("text"), str):
+            return content["text"]
         if "content" in content:
             return flatten_message_content(content["content"])
         if "input" in content:
             return json.dumps(content["input"], ensure_ascii=False)
         return json.dumps(content, ensure_ascii=False)
-
     return str(content)
 
 
 def normalize_message_content(message):
-    normalized = dict(message)
-    normalized["content"] = flatten_message_content(message.get("content", ""))
-    return normalized
+    """规范化消息而不压平多模态内容。"""
+    return {**message, "content": normalize_content(message.get("content", ""))}
 
 
 def format_tool_definitions(tools):
@@ -146,18 +212,19 @@ def inject_tool_prompt(messages, tools, tool_choice=None):
 
         elif role == "tool":
             tool_call_id = msg.get("tool_call_id", "unknown")
-            tool_content = flatten_message_content(msg.get("content", ""))
-            new_messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        f"<tool_result>\n"
-                        f"  <tool_call_id>{tool_call_id}</tool_call_id>\n"
-                        f"  <result>\n{tool_content}\n  </result>\n"
-                        f"</tool_result>"
-                    ),
-                }
+            tool_parts = normalize_content(msg.get("content", ""))
+            tool_content = flatten_message_content(tool_parts)
+            attachments = [part for part in tool_parts if part["type"] != "text"] if isinstance(tool_parts, list) else []
+            result_text = (
+                f"<tool_result>\n"
+                f"  <tool_call_id>{tool_call_id}</tool_call_id>\n"
+                f"  <result>\n{tool_content}\n  </result>\n"
+                f"</tool_result>"
             )
+            new_messages.append({
+                "role": "user",
+                "content": merge_content(result_text, attachments) if attachments else result_text,
+            })
 
         elif role == "assistant" and msg.get("tool_calls"):
             tc_text = flatten_message_content(msg.get("content")) or ""
