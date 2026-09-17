@@ -1,9 +1,8 @@
-"""GenAI 网页功能：附件上传、思考开关、联网检索。"""
+"""GenAI 网页功能：附件处理、思考开关、联网检索。"""
 import base64
 import binascii
 import logging
 import mimetypes
-import re
 import time
 import uuid
 from urllib.parse import unquote, urljoin, urlparse
@@ -16,41 +15,8 @@ from tools.prompts import flatten_message_content, normalize_content
 
 logger = logging.getLogger(__name__)
 BASE_URL = "https://genai.shanghaitech.edu.cn/htk"
-SITE_URL = "https://genai.shanghaitech.edu.cn/"
 IMAGE_LIMIT = 20 * 1024 * 1024
 DOCUMENT_LIMIT = 10 * 1024 * 1024
-IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
-APP_JS_PATTERN = re.compile(r"(/js/app\.[0-9a-f]+\.js)")
-UPLOAD_TOKEN_PATTERN = re.compile(r'token\s*:\s*"([0-9a-f]{32})"')
-_upload_token = None
-
-
-def image_upload_token():
-    """图片服务令牌：从前端脚本自动获取，进程内缓存。
-
-    图片服务是独立域名，它不认用户的登录令牌（不带令牌会返回 success=true 但
-    result 为空）。网页前端把自己使用的固定令牌写在了 app.js 中，这里同样读取
-    该公开资源，避免让使用者手工填写。
-    """
-    global _upload_token
-    if _upload_token:
-        return _upload_token
-    try:
-        with requests.get(SITE_URL, timeout=15) as response:
-            response.raise_for_status()
-            app_js = APP_JS_PATTERN.search(response.text)
-        if not app_js:
-            raise UpstreamError("未能从网页首页定位前端脚本，无法获取图片服务令牌")
-        with requests.get(urljoin(SITE_URL, app_js.group(1)), timeout=30) as response:
-            response.raise_for_status()
-            found = UPLOAD_TOKEN_PATTERN.search(response.text)
-        if not found:
-            raise UpstreamError("前端脚本中未找到图片服务令牌，图片上传暂不可用")
-    except requests.RequestException as exc:
-        raise UpstreamError("获取图片服务令牌失败，请稍后重试") from exc
-    _upload_token = found.group(1)
-    logger.info("image upload token acquired from web frontend")
-    return _upload_token
 
 
 def is_web_search_tool(tool):
@@ -169,40 +135,6 @@ def upload_json(url, token, **kwargs):
     return payload.get("result") or {}
 
 
-def upload_image(source, token):
-    """上传 URL/base64 图片，取得平台 URL 与视觉请求所需的尺寸。"""
-    if source.startswith("data:"):
-        raw, mime = decode_file(source, "image.png", IMAGE_LIMIT)
-    else:
-        raw, mime, _ = download_attachment(source, IMAGE_LIMIT)
-    if mime not in IMAGE_TYPES:
-        raise ValueError("图片仅支持 PNG/JPEG/WEBP/GIF")
-    headers = build_genai_headers(token)
-    with requests.get(BASE_URL + "/sys/dict/getDictItems/file_url", headers=headers, timeout=15) as response:
-        response.raise_for_status()
-        settings = response.json()
-    if not settings.get("success") or not settings.get("result"):
-        raise UpstreamError("平台未提供图片服务地址")
-    base = settings["result"][0]["value"].rstrip("/")
-    filename = "image" + (mimetypes.guess_extension(mime) or ".png")
-    with requests.post(
-        base + "/sys/common/upload",
-        headers={"token": image_upload_token()},
-        data={"biz": "temp", "uploadType": "local"},
-        files={"file": (filename, raw, mime)},
-        timeout=(10, 120),
-    ) as response:
-        response.raise_for_status()
-        payload = response.json()
-    result = payload.get("result") or {}
-    if not payload.get("success") or not result.get("url"):
-        raise UpstreamError("图片上传失败: " + str(payload.get("message", "缺少图片地址")))
-    if not result.get("width") or not result.get("height"):
-        raise UpstreamError("图片上传未返回有效尺寸")
-    logger.info("attachment uploaded kind=image bytes=%d", len(raw))
-    return base + "/sys/common/static/" + result["url"], result["width"], result["height"]
-
-
 def upload_document(file, token, model, group):
     """上传文档以获得文件标识和解析文本，当前请求使用同一会话。"""
     filename = str(file.get("filename") or "").replace("\\", "/").rsplit("/", 1)[-1]
@@ -230,7 +162,7 @@ def prepare_request(messages, model, config, body, api_format):
     """在开始响应前完成附件处理，保留历史多模态输入并生成当前轮参数。"""
     options = request_options(body, api_format)
     # 网页每轮都发送空图片字段；历史有图片时也保持同样的请求形状。
-    options.update(imageUrl="", imageUrls=[], width="", height="")
+    options.update(imageUrl="", imageUrls=[])
     last_user = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"), None)
     if last_user is None:
         raise ValueError("请求需要至少一条 user 消息")
@@ -248,10 +180,11 @@ def prepare_request(messages, model, config, body, api_format):
                     output.append(part)
                 elif part["type"] == "image_url":
                     image_count += 1
-                    url, width, height = upload_image(part["image_url"]["url"], config.token_manager.get_token())
+                    # 平台自己会读取 data URL 或公网 URL，不需要图片服务，也不需要宽高。
+                    url = part["image_url"]["url"]
+                    if url.startswith("data:") and len(url) > IMAGE_LIMIT * 4 // 3 + 1024:
+                        raise ValueError("内联图片必须小于 20 MiB")
                     if index == last_user:
-                        if not images:
-                            options.update(width=width, height=height)
                         images.append(url)
                     else:
                         output.append({"type": "image_url", "image_url": {"url": url, "detail": part["image_url"].get("detail", "high")}})
