@@ -101,6 +101,27 @@ Chat Completions、Anthropic Messages、OpenAI Responses 共用图片/文档上�
 
 服务日志确认图片不再上传：`images=1` 且 `prepare_ms=0`，不再出现 `attachment uploaded kind=image`。文档仍需要上传（平台只提供文档上传接口），继续使用用户自己的登录令牌。
 
+## 为什么经 Pi 的 genai-deepseek 看不到思维链
+
+现象：Pi 会话历史中 `genai-deepseek` / `deepseek-pro` 的 18 条回复只有 1 条带思考（`litellm-deepseek` 那类 provider 是 4873/6508，所以 Pi 本身会显示思考）。
+
+逐步排查，每一步都有实测：
+
+| 步骤 | 观察 |
+|---|---|
+| 直连代理 31100（Responses + `reasoning.effort=high`） | 有思考，196 字符 |
+| 经中转 31101（同一请求） | 同样有思考，196 字符 —— 中转没有丢弃 |
+| 中转日志 | 确实把 `effort=high` 映射为 `thinking=true`；代理日志显示第一跳收到 `thinking=True` |
+| 读 Pi 解析器 `openai-responses-shared.js` | 只要出现 `type: "reasoning"` 的输出项就创建 thinking 槽位，**不要求** `encrypted_content` |
+| 抓包（临时本地代理再转发给中转，用完已删） | 拿到真实请求：`thinking=true`、`max_tokens=128000`、两条 user 消息，第一条 72565 字符是动作协议与工具 schema |
+| 绕过代理与中转，直接看上游增量 | 短提示 3/3 有思考；同样 72k 长度换成中性填充文本 3/3 有思考；用真实协议文本只有 1/3 |
+| 小提示词走中转 | 稳定有思考：“你好” 564 字符、注水题 403 字符 |
+| Pi 实跑 | 直连代理 2/4 次有思考，经中转 0/2 次；样本小，只能说不可靠 |
+
+**结论**：`deepseek-pro` 的思考是平台侧尽力而为。在 Pi 这种大提示词（约 2.2 万 token、24 个工具 schema、动作协议文本）下，上游大多数时候根本不发 `reasoning_content`；代理和中转都只是如实转发，不会凭空补造。另一个独立因素是重复同一问题会命中平台缓存（0.0–0.1 秒返回旧答案，完全没有思考）。
+
+想稳定看到思维链，目前可行的做法是缩小提示词（去掉无关工具 schema、缩短系统提示），或者换一个在该形态下稳定返回思考的模型。抓包用的临时 provider、本地代理与第二个中转实例均已删除，`models.json` 已还原，31105/31107 端口已释放，两个服务保持 active。
+
 ## 本地检查
 
 - 现有检查：`pixi run pytest -q --disable-warnings`，62 项通过。
